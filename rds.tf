@@ -9,7 +9,7 @@ resource "aws_db_instance" "default" {
   engine               = "postgres"
   engine_version       = "16.3"
   instance_class       = "db.t3.micro"
-  db_name              = replace(var.project_name, "-", "")
+  db_name              = var.db_name
   username             = var.db_username
   password             = var.db_password
   port                 = var.db_port

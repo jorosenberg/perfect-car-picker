@@ -8,6 +8,9 @@ variable "project_name" {
   default     = "perfect-car-picker"
 }
 
+variable "db_name" {
+    type        = string
+}
 variable "db_username" {
   type        = string
 }
