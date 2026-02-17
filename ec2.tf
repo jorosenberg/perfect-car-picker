@@ -5,7 +5,7 @@ resource "aws_instance" "web_server" {
   vpc_security_group_ids = [aws_security_group.web_sg.id]
   iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
   
-  user_data = templatefile("${path.module}/user_data.sh.tpl", {
+  user_data = templatefile("${path.module}/userdata/user_data.sh.tpl", {
     github_repo_url = var.github_repo_url
     api_url         = "${aws_apigatewayv2_api.lambda_api.api_endpoint}/calculate"
     db_host         = aws_db_instance.default.address
