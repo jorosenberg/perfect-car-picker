@@ -5,17 +5,22 @@ set -e
 apt-get update -y
 apt-get install -y docker.io git
 
-systemctl start docker
-systemctl enable Docker
+systemctl start docker || true
+systemctl enable docker || true
 
 usermod -a -G docker ubuntu
 
+mkdir -p /home/ubuntu/app
+chown ubuntu:ubuntu /home/ubuntu/app
+
 # only clone frontend cuz t3.micro
-git clone --filter=blob:none --no-checkout ${github_repo_url} /home/ubuntu/app
+sudo -u ubuntu git clone --filter=blob:none --no-checkout ${github_repo_url} /home/ubuntu/app
+
 cd /home/ubuntu/app
-git sparse-checkout init --cone
-git sparse-checkout set frontend
-git checkout
+
+sudo -u ubuntu git sparse-checkout init --cone
+sudo -u ubuntu git sparse-checkout set frontend
+sudo -u ubuntu git checkout
 
 cat <<EOT >> .env
 API_URL=${api_url}
