@@ -69,6 +69,20 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
+    # pre-compile python libraries
+    - name: Pre-compile Backend Dependencies
+      run: |
+        cd backend
+        mkdir -p package
+        pip install \
+          --target ./package \
+          -r requirements.txt \
+          --platform manylinux2014_x86_64 \
+          --only-binary=:all: \
+          --implementation cp \
+          --python-version 3.11 \
+          --upgrade
+
     - name: Build and Push Docker Image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}

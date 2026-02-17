@@ -1,24 +1,7 @@
 FROM public.ecr.aws/lambda/python:3.11
 
-# possible fix for numpy and pandas
-RUN dnf update -y && \
-    dnf install -y \
-    gcc \
-    gcc-c++ \
-    make \
-    cmake \
-    unzip \
-    libcurl-devel \
-    python3-devel \
-    postgresql-devel && \
-    dnf clean all
+COPY package/ ${LAMBDA_TASK_ROOT}
 
-RUN pip install --upgrade pip
-
-# 10gb
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY *.py .
+COPY *.py ${LAMBDA_TASK_ROOT}
 
 CMD [ "lambda_function.lambda_handler" ]
