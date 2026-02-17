@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Terraform and Docker Deploy
+    name: Terraform & Docker Deploy
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -54,22 +54,17 @@ jobs:
         terraform_wrapper: false
 
     - name: Terraform Init
-      working-directory: .
+      working-directory: ./infra
       run: terraform init
 
     # ecr
     - name: Terraform Apply (Target ECR)
-      working-directory: .
+      working-directory: ./infra
       env:
         TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-        TF_VAR_github_repo_url: ${{ env.TF_VAR_GITHUB_REPO_URL }}
       run: terraform apply -target=aws_ecr_repository.lambda_repo -auto-approve
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
-
-    # pre-compile python libraries
+    # pre compile python libraries
     - name: Pre-compile Backend Dependencies
       run: |
         cd backend
@@ -83,27 +78,30 @@ jobs:
           --python-version 3.11 \
           --upgrade
 
+    # backend push
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
     - name: Build and Push Docker Image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: latest
       run: |
-        # output a standard manifest that AWS Lambda can read
         docker build --provenance=false -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./backend
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "::notice::Pushed image to $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-    # infra push
-    - name: Terraform Apply
-      working-directory: .
+    # tf apply
+    - name: Terraform Apply (Full Infrastructure)
+      working-directory: ./infra
       env:
         TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-        TF_VAR_github_repo_url: ${{ env.TF_VAR_GITHUB_REPO_URL }}
       run: terraform apply -auto-approve
 
     # output
     - name: Output URLs
-      working-directory: .
+      working-directory: ./infra
       run: |
         echo "Deployment Complete!"
         echo "API Endpoint: $(terraform output -raw api_url)"
