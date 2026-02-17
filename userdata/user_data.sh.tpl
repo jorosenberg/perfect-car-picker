@@ -13,10 +13,10 @@ usermod -a -G docker ubuntu
 mkdir -p /home/ubuntu/app
 chown ubuntu:ubuntu /home/ubuntu/app
 
-# only clone frontend cuz t3.micro
-sudo -u ubuntu git clone --filter=blob:none --no-checkout ${github_repo_url} /home/ubuntu/app
-
 cd /home/ubuntu/app
+
+# only clone frontend cuz t3.micro
+sudo -u ubuntu git clone --filter=blob:none --no-checkout ${github_repo_url}
 
 sudo -u ubuntu git sparse-checkout init --cone
 sudo -u ubuntu git sparse-checkout set frontend

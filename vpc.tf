@@ -29,6 +29,14 @@ resource "aws_subnet" "public" {
   }
 }
 
+resource "aws_subnet" "public_2" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.public_subnet_2_cidr
+  map_public_ip_on_launch = true 
+  availability_zone       = "${var.aws_region}b"
+  tags = { Name = "${var.project_name}-public-subnet-2" }
+}
+
 resource "aws_subnet" "private_1" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.private_subnet_1_cidr
@@ -103,6 +111,27 @@ resource "aws_vpc_security_group_ingress_rule" "db_from_web" {
   ip_protocol                  = "tcp"
 }
 
+# lb sg
+resource "aws_security_group" "lb_sg" {
+  name        = "${var.project_name}-lb-sg"
+  description = "Allow inbound HTTP traffic from internet"
+  vpc_id      = aws_vpc.main.id
+
+  tags = { Name = "${var.project_name}-lb-sg" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "lb_in" {
+  security_group_id = aws_security_group.web_sg.id
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
+resource "aws_vpc_security_group_egress_rule" "lb_out" {
+  security_group_id = aws_security_group.web_sg.id
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
 # route
 resource "aws_route_table" "public_rt" {
   vpc_id = aws_vpc.main.id
@@ -119,5 +148,10 @@ resource "aws_route_table" "public_rt" {
 
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+resource "aws_route_table_association" "public_2" {
+  subnet_id      = aws_subnet.public_2.id
   route_table_id = aws_route_table.public_rt.id
 }
