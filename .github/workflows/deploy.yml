@@ -13,6 +13,7 @@ env:
   TF_VAR_project_name: "perfect-car-picker"
   TF_VAR_aws_region: "us-east-1"
   TF_VAR_db_username: ${{ secrets.TF_VAR_DB_USERNAME }}
+  TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
   TF_VAR_db_name: ${{ secrets.DB_NAME }}
 
   # network tf vars
@@ -60,8 +61,6 @@ jobs:
     # ecr
     - name: Terraform Apply (Target ECR)
       working-directory: .
-      env:
-        TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       run: |
         terraform import aws_ecr_repository.lambda_repo ${TF_VAR_project_name}-backend || true
         terraform apply -target=aws_ecr_repository.lambda_repo -auto-approve
@@ -97,8 +96,6 @@ jobs:
     # tf apply
     - name: Terraform Apply (Full Infrastructure)
       working-directory: .
-      env:
-        TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       run: terraform apply -auto-approve
 
     # output
