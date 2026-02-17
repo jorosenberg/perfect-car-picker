@@ -21,6 +21,4 @@ RUN pip install -r requirements.txt
 
 COPY *.py .
 
-COPY resale_model.joblib .
-
 CMD [ "lambda_function.lambda_handler" ]
