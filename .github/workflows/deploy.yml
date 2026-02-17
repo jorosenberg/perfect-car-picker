@@ -54,12 +54,12 @@ jobs:
         terraform_wrapper: false
 
     - name: Terraform Init
-      working-directory: ./infra
+      working-directory: .
       run: terraform init
 
     # ecr
     - name: Terraform Apply (Target ECR)
-      working-directory: ./infra
+      working-directory: .
       env:
         TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       run: |
@@ -96,14 +96,14 @@ jobs:
 
     # tf apply
     - name: Terraform Apply (Full Infrastructure)
-      working-directory: ./infra
+      working-directory: .
       env:
         TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       run: terraform apply -auto-approve
 
     # output
     - name: Output URLs
-      working-directory: ./infra
+      working-directory: .
       run: |
         terraform refresh
 
