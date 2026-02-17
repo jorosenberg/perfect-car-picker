@@ -1,0 +1,94 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: perfect-car-picker-backend
+  TF_VERSION: 1.5.0
+
+  TF_VAR_project_name: "perfect-car-picker"
+  TF_VAR_aws_region: "us-east-1"
+  TF_VAR_db_username: "adminuser"
+
+  # network tf vars
+  TF_VAR_github_repo_url: ${{ secrets.TF_VAR_GITHUB_REPO_URL }} 
+  TF_VAR_vpc_cidr: ${{ secrets.TF_VAR_VPC_CIDR }}
+  TF_VAR_public_subnet_cidr: ${{ secrets.TF_VAR_PUBLIC_SUBNET_CIDR }}
+  TF_VAR_private_subnet_1_cidr: ${{ secrets.TF_VAR_PRIVATE_SUBNET_1_CIDR }}
+  TF_VAR_private_subnet_2_cidr: ${{ secrets.TF_VAR_PRIVATE_SUBNET_2_CIDR }}
+  TF_VAR_app_port: ${{ secrets.TF_VAR_APP_PORT }}
+  TF_VAR_ssh_port: ${{ secrets.TF_VAR_SSH_PORT }}
+  TF_VAR_db_port: ${{ secrets.TF_VAR_DB_PORT }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Terraform and Docker Deploy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      working-directory: .
+      run: terraform init
+
+    # ecr
+    - name: Terraform Apply (Target ECR)
+      working-directory: .
+      env:
+        TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+        TF_VAR_github_repo_url: ${{ env.TF_VAR_GITHUB_REPO_URL }}
+      run: terraform apply -target=aws_ecr_repository.lambda_repo -auto-approve
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build and Push Docker Image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: latest
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./backend
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "::notice::Pushed image to $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+    # infra push
+    - name: Terraform Apply
+      working-directory: .
+      env:
+        TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+        TF_VAR_github_repo_url: ${{ env.TF_VAR_GITHUB_REPO_URL }}
+      run: terraform apply -auto-approve
+
+    # output
+    - name: Output URLs
+      working-directory: .
+      run: |
+        echo "Deployment Complete!"
+        echo "API Endpoint: $(terraform output -raw api_url)"
+        echo "Website URL: $(terraform output -raw website_url)"
