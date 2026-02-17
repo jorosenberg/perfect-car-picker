@@ -25,3 +25,9 @@ resource "aws_lb_target_group" "app_tg" {
     matcher             = "200"
   }
 }
+
+resource "aws_lb_target_group_attachment" "web_attachment" {
+  target_group_arn = aws_lb_target_group.app_tg.arn
+  target_id        = aws_instance.web_server.id
+  port             = var.app_port
+}
