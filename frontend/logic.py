@@ -47,7 +47,7 @@ class APIClient:
                 "action": "recommend",
                 "inputs": user_prefs
             }
-            response = requests.post(self.api_url, json=payload, timeout=8)
+            response = requests.post(self.api_url, json=payload, timeout=60)
             if response.status_code == 200:
                 return pd.DataFrame(response.json())
             return pd.DataFrame()
@@ -65,7 +65,7 @@ class APIClient:
                 "car_data": car_row.to_dict(),
                 "inputs": inputs
             }
-            response = requests.post(self.api_url, json=payload, timeout=8)
+            response = requests.post(self.api_url, json=payload, timeout=60)
             if response.status_code == 200:
                 result = response.json()
                 result['source'] = "⚡ AWS Lambda"
@@ -85,7 +85,7 @@ class APIClient:
                 "car_data": car_row.to_dict(),
                 "inputs": {"priority": priority}
             }
-            response = requests.post(self.api_url, json=payload, timeout=10)
+            response = requests.post(self.api_url, json=payload, timeout=60)
             if response.status_code == 200:
                 return response.json().get('pitch', "No pitch available.")
             return f"Error: {response.text}"
