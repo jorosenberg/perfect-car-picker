@@ -131,12 +131,16 @@ with tab1:
             st.markdown("### 6. Capability & Tech")
             c1, c2 = st.columns(2)
             with c1:
+                # Definitions placed here to ensure scope validity
                 seats_needs = st.select_slider("Passenger Capacity", options=[2, 4, 5, 6, 7, 8], value=5)
+                pax_needs = st.select_slider("Legroom", options=["Compact", "Standard", "Spacious"])
+                
             with c2:
                 terrain_choice = st.select_slider("Off-Road", options=["City/Paved", "Bumpy/Gravel", "Off-Road"], value="City/Paved")
                 terrain_map = {"City/Paved": 2, "Bumpy/Gravel": 6, "Off-Road": 9}
                 target_offroad = terrain_map[terrain_choice]
-            
+                perf_needs = st.select_slider("Speed", options=["Standard", "Peppy", "Fast"])
+
             assist_needs = st.radio("Assist Level?", ["Basic", "Mid (Lane Keep)", "Advanced (Hands-Free)"], index=1)
             feature_options = ["Apple CarPlay", "Android Auto", "Leather", "Sunroof", "AWD", "Heated Seats", "Autopilot", "3rd Row", "Tow Package"]
             desired_features = st.multiselect("Must-Haves:", feature_options)
@@ -158,6 +162,7 @@ with tab1:
             elif "Hybrid" in fuel_choices: target_mpg = 50
             else: target_mpg = 25
 
+            # Define variables used in logic (Ensuring they exist)
             target_accel = 4.5 if perf_needs == "Fast" else 7.5
             target_assist = 9.0 if "Advanced" in assist_needs else 6.0
             target_price = calc_budget
@@ -170,7 +175,7 @@ with tab1:
                 
             user_prefs = {
                 'price': target_price, 'class': target_class, 
-                'fuel_type': 'Any', # Optimization handled by filtered list if using local, but here we rely on backend logic
+                'fuel_type': 'Any', 
                 'city_mpg': target_mpg, 'reliability_score': 8.0, 'luxury_score': target_luxury,
                 'rear_legroom': 36.0, 'acceleration': target_accel,
                 'cargo_space': target_cargo, 'driver_assist_score': target_assist,
@@ -204,7 +209,7 @@ with tab1:
                     }
                     
                     results = []
-                    for idx, row in recs_df.iterrows():
+                    for idx, row in recs.iterrows():
                         # 3. CALL API (CALCULATE)
                         costs = api_client.calculate_tco(row, tco_inputs)
                         
@@ -237,7 +242,6 @@ with tab1:
                     
                     results_df = pd.DataFrame(results).sort_values(by=sort_cols, ascending=sort_asc)
                     
-                    # Export
                     st.download_button("📥 Download CSV", results_df.to_csv(index=False).encode('utf-8'), 'recs.csv', 'text/csv')
                     
                     # Display
@@ -250,7 +254,7 @@ with tab1:
                             c1.metric("Price", f"${row.get('price',0):,.0f}")
                             c2.metric("Monthly Flow", f"${row.get('Monthly Cash Flow',0):.0f}")
                             c3.metric("MPG/MPGe", f"{row.get('Est MPG', row.get('city_mpg'))}")
-                            c4.metric("Resale", f"${row.get('Resale Value',0):,.0f}")
+                            c4.metric("Seats", f"{row.get('seats', 5)}") # Show Seats
                             
                             if 'source' in row: st.caption(f"⚡ {row['source']}")
 
