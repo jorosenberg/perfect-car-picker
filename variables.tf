@@ -60,3 +60,7 @@ variable "ssh_port" {
 variable "db_port" {
   type        = number
 }
+
+variable "key_name" {
+  type        = string
+}
