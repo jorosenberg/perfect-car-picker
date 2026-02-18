@@ -1,40 +1,38 @@
-import sqlite3
+import os
+import pandas as pd
+import sqlalchemy
+from sqlalchemy import create_engine
 
 def init_db():
-    conn = sqlite3.connect('cars.db')
-    c = conn.cursor()
+    # 1. Configuration
+    # Terraform injects these into the container/environment
+    db_host = os.environ.get('DB_HOST')
+    db_user = os.environ.get('DB_USER', 'adminuser')
+    db_pass = os.environ.get('DB_PASS')
+    db_name = os.environ.get('DB_NAME', 'cardb')
     
-    # Not adding new cars for portfolio reason
-    c.execute('DROP TABLE IF EXISTS cars')
-    
-    c.execute('''
-        CREATE TABLE cars (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            make TEXT,
-            model TEXT,
-            year INTEGER,
-            class TEXT,
-            price INTEGER,
-            city_mpg REAL,
-            hwy_mpg REAL,
-            fuel_type TEXT,
-            reliability_score REAL,
-            luxury_score INTEGER,
-            features TEXT,
-            cargo_space REAL,
-            rear_legroom REAL,
-            acceleration REAL,
-            review_summary TEXT,
-            driver_assist_score INTEGER,
-            driver_assist_name TEXT,
-            driver_assist_link TEXT,
-            offroad_capability INTEGER,
-            seats INTEGER
-        )
-    ''')
-    
-    # Insert Data scrubbed with Gemini
-    cars = [
+    # 2. Connection Logic (Hybrid)
+    if db_host and db_pass:
+        print(f"🚀 Detected AWS Environment. Connecting to RDS: {db_host}...")
+        # PostgreSQL Connection String
+        db_url = f"postgresql+psycopg2://{db_user}:{db_pass}@{db_host}:5432/{db_name}"
+    else:
+        # Local fallback (SQLite)
+        db_path = os.path.join(os.path.dirname(__file__), 'cars.db')
+        print(f"⚠️ No DB_HOST found. Using local SQLite '{db_path}'...")
+        db_url = f"sqlite:///{db_path}"
+
+    try:
+        engine = create_engine(db_url)
+        # Test connection
+        with engine.connect() as conn:
+            print("✅ Connection successful.")
+    except Exception as e:
+        print(f"❌ Connection failed: {e}")
+        return
+
+    # 3. Hardcoded Data (From your specific list)
+    cars_data = [
         # --- HYBRIDS ---
         ('Toyota', 'Prius', 2024, 'Sedan', 28000, 57, 56, 'Hybrid', 9.5, 5, 'Toyota Safety Sense 3.0, Wireless CarPlay, Solar Roof, Heated Seats', 20.3, 34.8, 7.2, "Pros: Incredible MPG, sleek new design. Cons: Rear headroom is tight.", 7, "Toyota Safety Sense™ 3.0", "https://www.toyota.com/safety-sense/", 2, 5),
         ('Honda', 'CR-V Hybrid', 2024, 'SUV', 34000, 43, 36, 'Hybrid', 9.0, 6, 'Honda Sensing, Bose Audio, Leather Seats, Moonroof', 39.3, 41.0, 7.6, "Pros: Spacious interior, smooth hybrid system. Cons: No spare tire.", 6, "Honda Sensing®", "https://automobiles.honda.com/sensing", 5, 5),
@@ -65,15 +63,29 @@ def init_db():
         ('Chevrolet', 'Bolt EV', 2023, 'Hatchback', 27000, 120, 110, 'Electric', 7.0, 3, 'Super Cruise, Sport Mode, Regen on Demand Paddle', 16.6, 36.0, 6.5, "Pros: Great value EV, punchy acceleration. Cons: Slow DC fast charging speeds.", 8, "Super Cruise™", "https://www.chevrolet.com/electric/super-cruise", 2, 5)
     ]
     
-    # Insert data
-    c.executemany('''
-        INSERT INTO cars (make, model, year, class, price, city_mpg, hwy_mpg, fuel_type, reliability_score, luxury_score, features, cargo_space, rear_legroom, acceleration, review_summary, driver_assist_score, driver_assist_name, driver_assist_link, offroad_capability, seats)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', cars)
-    
-    conn.commit()
-    conn.close()
-    print("Database initialized successfully!")
+    # 4. Define Column Names
+    # Matches the schema you provided
+    columns = [
+        'make', 'model', 'year', 'class', 'price', 
+        'city_mpg', 'hwy_mpg', 'fuel_type', 
+        'reliability_score', 'luxury_score', 'features', 
+        'cargo_space', 'rear_legroom', 'acceleration', 
+        'review_summary', 'driver_assist_score', 'driver_assist_name', 
+        'driver_assist_link', 'offroad_capability', 'seats'
+    ]
+
+    # 5. Create DataFrame
+    df = pd.DataFrame(cars_data, columns=columns)
+
+    # 6. Load to DB
+    print("📥 Inserting into database...")
+    try:
+        # if_exists='replace' will DROP the table and recreate it with the DataFrame's schema
+        # This handles the ID auto-increment creation implicitly in Postgres (SERIAL) and SQLite (AUTOINCREMENT)
+        df.to_sql('cars', engine, if_exists='replace', index=False, method='multi')
+        print(f"✅ Database initialized successfully with {len(df)} records!")
+    except Exception as e:
+        print(f"❌ Error inserting data: {e}")
 
 if __name__ == "__main__":
     init_db()
