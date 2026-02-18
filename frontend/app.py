@@ -209,7 +209,7 @@ with tab1:
                     }
                     
                     results = []
-                    for idx, row in recs.iterrows():
+                    for idx, row in recs_df.iterrows():
                         # 3. CALL API (CALCULATE)
                         costs = api_client.calculate_tco(row, tco_inputs)
                         
