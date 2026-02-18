@@ -11,7 +11,7 @@ st.set_page_config(page_title="Perfect Car Picker", layout="wide")
 API_URL = os.getenv("API_URL") # Injected by Terraform
 if not API_URL:
     st.error("⚠️ API_URL environment variable is missing. The app cannot connect to the backend.")
-    st.stop()
+    # We continue instead of stopping to allow UI debugging, but API calls will fail gracefully in logic.py
 
 # Initialize Client
 api_client = APIClient(API_URL)
@@ -21,6 +21,11 @@ if 'deal_car' not in st.session_state:
     st.session_state.deal_car = None
 if 'comparison_list' not in st.session_state:
     st.session_state.comparison_list = []
+# NEW: Persist search results and AI pitches
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = None
+if 'pitch_map' not in st.session_state:
+    st.session_state.pitch_map = {}
 
 @st.cache_data
 def get_cached_data():
@@ -131,7 +136,6 @@ with tab1:
             st.markdown("### 6. Capability & Tech")
             c1, c2 = st.columns(2)
             with c1:
-                # Definitions placed here to ensure scope validity
                 seats_needs = st.select_slider("Passenger Capacity", options=[2, 4, 5, 6, 7, 8], value=5)
                 pax_needs = st.select_slider("Legroom", options=["Compact", "Standard", "Spacious"])
                 
@@ -150,10 +154,8 @@ with tab1:
 
         submitted = st.form_submit_button("🔍 Analyze & Find Matches")
 
+    # --- CALCULATION LOGIC (Only runs on Submit) ---
     if submitted:
-        st.divider()
-        st.subheader("Recommended for You")
-        
         if not fuel_choices:
             st.error("Please select at least one Fuel Type.")
         else:
@@ -162,7 +164,6 @@ with tab1:
             elif "Hybrid" in fuel_choices: target_mpg = 50
             else: target_mpg = 25
 
-            # Define variables used in logic (Ensuring they exist)
             target_accel = 4.5 if perf_needs == "Fast" else 7.5
             target_assist = 9.0 if "Advanced" in assist_needs else 6.0
             target_price = calc_budget
@@ -189,12 +190,14 @@ with tab1:
 
             if recs_df.empty:
                 st.warning("No matches found from API.")
+                st.session_state.search_results = None
             else:
                 # Filter results by fuel type (Client-side filtering of API results)
                 recs_df = recs_df[recs_df['fuel_type'].isin(fuel_choices)]
                 
                 if recs_df.empty:
                     st.warning("Matches found, but none matched your Fuel selection.")
+                    st.session_state.search_results = None
                 else:
                     tco_inputs = {
                         'years': years_ownership, 
@@ -242,30 +245,47 @@ with tab1:
                     
                     results_df = pd.DataFrame(results).sort_values(by=sort_cols, ascending=sort_asc)
                     
-                    st.download_button("📥 Download CSV", results_df.to_csv(index=False).encode('utf-8'), 'recs.csv', 'text/csv')
-                    
-                    # Display
-                    for idx, row in results_df.iterrows():
-                        cost_label = "Monthly Pmt" if global_method != 'Cash' else "Monthly TCO"
-                        cost_val = row.get('Monthly Payment', 0) if global_method != 'Cash' else row.get('Monthly True Cost', 0)
-                        
-                        with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=True):
-                            c1, c2, c3, c4 = st.columns(4)
-                            c1.metric("Price", f"${row.get('price',0):,.0f}")
-                            c2.metric("Monthly Flow", f"${row.get('Monthly Cash Flow',0):.0f}")
-                            c3.metric("MPG/MPGe", f"{row.get('Est MPG', row.get('city_mpg'))}")
-                            c4.metric("Seats", f"{row.get('seats', 5)}") # Show Seats
-                            
-                            if 'source' in row: st.caption(f"⚡ {row['source']}")
+                    # SAVE TO SESSION STATE (Persist across reruns)
+                    st.session_state.search_results = results_df
+                    # Reset Pitch map on new search
+                    st.session_state.pitch_map = {}
 
-                            if st.button(f"🤖 Why buy this?", key=f"ai_{idx}"):
-                                with st.spinner("Asking AI..."):
-                                    pitch = api_client.get_ai_pitch(row, priority)
-                                    st.info(pitch)
+    # --- RENDER RESULTS (Persistent) ---
+    if st.session_state.search_results is not None:
+        st.divider()
+        st.subheader("Recommended for You")
+        
+        results_df = st.session_state.search_results
+        
+        st.download_button("📥 Download Results as CSV", results_df.to_csv(index=False).encode('utf-8'), 'recs.csv', 'text/csv')
+        
+        for idx, row in results_df.iterrows():
+            cost_label = "Monthly Pmt" if global_method != 'Cash' else "Monthly TCO"
+            cost_val = row.get('Monthly Payment', 0) if global_method != 'Cash' else row.get('Monthly True Cost', 0)
+            
+            with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=True):
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Price", f"${row.get('price',0):,.0f}")
+                c2.metric("Monthly Flow", f"${row.get('Monthly Cash Flow',0):.0f}", help="Pmt + Fuel + Ins + Maint + Subs")
+                c3.metric("MPG/MPGe", f"{row.get('Est MPG', row.get('city_mpg'))}", help="Weighted by driving habits & climate")
+                c4.metric("Seats", f"{row.get('seats', 5)}") 
+                
+                if 'source' in row: st.caption(f"⚡ {row['source']}")
 
-                            if st.button(f"💰 Deep Dive", key=f"btn_{idx}"):
-                                st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
-                                st.success("Sent to Deal Analyzer!")
+                # AI PITCH BUTTON
+                # Logic: If clicked, fetch pitch, update session state, then display from session state
+                if st.button(f"🤖 Why buy this?", key=f"ai_{idx}"):
+                    with st.spinner("Asking AI..."):
+                        pitch = api_client.get_ai_pitch(row, priority)
+                        st.session_state.pitch_map[idx] = pitch
+                
+                # Render Pitch if exists
+                if idx in st.session_state.pitch_map:
+                    st.info(st.session_state.pitch_map[idx])
+
+                if st.button(f"💰 Deep Dive", key=f"btn_{idx}"):
+                    st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
+                    st.success("Sent to Deal Analyzer!")
 
 # === TAB 2: COMPARE ===
 with tab2:
