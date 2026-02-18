@@ -60,7 +60,3 @@ variable "ssh_port" {
 variable "db_port" {
   type        = number
 }
-
-variable "github_repo_url" {
-  type        = string
-}
