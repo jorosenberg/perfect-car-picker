@@ -40,7 +40,7 @@ class APIClient:
 
     def get_recommendations(self, user_prefs):
         """Call Lambda to get ML Recommendations"""
-        if not self.api_url: return []
+        if not self.api_url: return pd.DataFrame()
         
         try:
             payload = {
