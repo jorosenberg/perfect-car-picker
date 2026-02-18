@@ -1,13 +1,12 @@
 name: Deploy Data to RDS
 
 on:
-  workflow_dispatch: # Manual trigger (Safety first for DB operations)
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-1
   PROJECT_NAME: perfect-car-picker
   DB_NAME: cardb
-  # Matches deploy.yml logic: Use secret if defined, else default
   DB_USER: ${{ secrets.TF_VAR_DB_USERNAME || 'adminuser' }}
 
 permissions:
@@ -68,7 +67,6 @@ jobs:
     - name: Setup SSH Tunnel
       env:
         SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        # This specific key is required for tunneling but relies on you creating the secret
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         BASTION_HOST: ${{ steps.infra.outputs.EC2_IP }}
         RDS_HOST: ${{ steps.infra.outputs.RDS_ENDPOINT }}
@@ -82,7 +80,7 @@ jobs:
         # 2. Open Tunnel in Background
         # Forwards local port 5432 -> EC2 -> RDS port 5432
         echo "🔌 Opening Tunnel..."
-        ssh -i key.pem -f -N -L 5432:$RDS_HOST:5432 ec2-user@$BASTION_HOST
+        ssh -i key.pem -f -N -L 5432:$RDS_HOST:5432 ubuntu@$BASTION_HOST
         
         # 3. Wait for connection
         sleep 5
@@ -90,11 +88,10 @@ jobs:
 
     - name: Run Database Initialization
       env:
-        # Point to localhost because of the SSH Tunnel
         DB_HOST: "127.0.0.1" 
         DB_PORT: "5432"
         DB_NAME: ${{ env.DB_NAME }}
-        DB_USER: ${{ env.DB_USER }}
+        DB_USER: ${{ secrets.DB_USERNAME }}
         DB_PASS: ${{ secrets.DB_PASSWORD }}
       run: |
         echo "🚀 Running init_db.py..."
