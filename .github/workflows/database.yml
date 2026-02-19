@@ -90,7 +90,7 @@ jobs:
         DB_HOST: "127.0.0.1" 
         DB_PORT: "5432"
         DB_NAME: ${{ env.DB_NAME }}
-        DB_USER: ${{ secrets.DB_USERNAME }}
+        DB_USER: ${{ secrets.TF_VAR_DB_USERNAME }}
         DB_PASS: ${{ secrets.DB_PASSWORD }}
       run: |
         echo "🚀 Running init_db.py..."
