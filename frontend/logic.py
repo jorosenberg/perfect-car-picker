@@ -4,6 +4,7 @@ import os
 import requests
 import json
 import sqlalchemy
+import time
 
 # --- 1. DATA LOADING (For UI Dropdowns) ---
 def load_data():
@@ -19,15 +20,28 @@ def load_data():
     if db_host and db_pass:
         try:
             db_url = f"postgresql+psycopg2://{db_user}:{db_pass}@{db_host}:5432/{db_name}"
-            engine = sqlalchemy.create_engine(db_url)
-            # Load basic info needed for UI
-            df = pd.read_sql("SELECT * FROM cars", engine)
-            return df
+            engine = sqlalchemy.create_engine(
+                db_url, 
+                connect_args={'connect_timeout': 5}
+            )
+
+            max_retries = 6
+            for attempt in range(max_retries):
+                try:
+                    df = pd.read_sql("SELECT * FROM cars", engine)
+                    print("Successfully connected to RDS and loaded data.")
+                    return df
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        print(f"RDS not ready. Retrying in 5 seconds... ({attempt + 1}/{max_retries})")
+                        time.sleep(5)
+                    else:
+                        print(f"RDS Connection Failed after 30 seconds: {e}")
+                        return pd.DataFrame() 
+                    
         except Exception as e:
-            print(f"RDS Connection Failed: {e}")
-            return pd.DataFrame() # Return empty on fail
-            
-    return pd.DataFrame()
+            print(f"Database Configuration Error: {e}")
+            return pd.DataFrame()
 
 # --- 2. API CLIENT (Thin Client Logic) ---
 class APIClient:
@@ -47,7 +61,7 @@ class APIClient:
                 "action": "recommend",
                 "inputs": user_prefs
             }
-            response = requests.post(self.api_url, json=payload, timeout=60)
+            response = requests.post(self.api_url, json=payload, timeout=29)
             if response.status_code == 200:
                 return pd.DataFrame(response.json())
             return pd.DataFrame()
@@ -65,7 +79,7 @@ class APIClient:
                 "car_data": car_row.to_dict(),
                 "inputs": inputs
             }
-            response = requests.post(self.api_url, json=payload, timeout=60)
+            response = requests.post(self.api_url, json=payload, timeout=29)
             if response.status_code == 200:
                 result = response.json()
                 result['source'] = "⚡ AWS Lambda"
@@ -85,7 +99,7 @@ class APIClient:
                 "car_data": car_row.to_dict(),
                 "inputs": {"priority": priority}
             }
-            response = requests.post(self.api_url, json=payload, timeout=60)
+            response = requests.post(self.api_url, json=payload, timeout=29)
             if response.status_code == 200:
                 return response.json().get('pitch', "No pitch available.")
             return f"Error: {response.text}"
