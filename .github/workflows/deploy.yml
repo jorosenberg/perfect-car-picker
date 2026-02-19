@@ -10,6 +10,8 @@ env:
   ECR_REPOSITORY: perfect-car-picker-backend
   TF_VERSION: 1.5.0
 
+  HF_API_KEY: ${{ secrets.HF_API_KEY }}
+
   TF_VAR_project_name: "perfect-car-picker"
   TF_VAR_aws_region: "us-east-1"
   TF_VAR_db_username: ${{ secrets.TF_VAR_DB_USERNAME }}
