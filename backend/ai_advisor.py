@@ -13,30 +13,23 @@ def get_car_pitch(car_row, priority):
     Explain why this car fits their priority.
     """
     
+    client = boto3.client('bedrock-runtime', region_name='us-east-1')
     try:
-        # AWS Bedrock Client
-        # Note: In Lambda, this uses the attached IAM Role automatically.
-        client = boto3.client('bedrock-runtime', region_name='us-east-1')
-        
-        body = json.dumps({
-            "inputText": prompt,
-            "textGenerationConfig": {
-                "maxTokenCount": 150,
-                "stopSequences": [],
-                "temperature": 0.7,
-                "topP": 1
+        response = client.converse(
+        modelId='amazon.nova-micro-v1:0', 
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": prompt}]
             }
-        })
-        
-        response = client.invoke_model(
-            modelId='amazon.titan-text-express-v1',
-            contentType='application/json',
-            accept='application/json',
-            body=body
+        ],
+        inferenceConfig={
+            "maxTokens": 60,
+            "temperature": 0.7
+            }
         )
-        
-        response_body = json.loads(response.get('body').read())
-        return response_body.get('results')[0].get('outputText').strip()
+    
+        return response['output']['message']['content'][0]['text'].strip()
         
     except Exception as e:
         print(f"Bedrock Error: {e}")
