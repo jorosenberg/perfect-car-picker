@@ -11,6 +11,8 @@ resource "aws_instance" "web_server" {
     github_repo_url = var.github_repo_url
     api_url         = "${aws_apigatewayv2_api.lambda_api.api_endpoint}/calculate"
     db_host         = aws_db_instance.default.address
+    db_name         = var.db_name
+    db_user         = var.db_username
     db_pass         = var.db_password
     aws_region      = var.aws_region
     app_port        = var.app_port
