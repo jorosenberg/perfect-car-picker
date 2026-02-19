@@ -65,7 +65,6 @@ jobs:
     - name: Terraform Apply (Target ECR)
       working-directory: .
       run: |
-        terraform import aws_ecr_repository.lambda_repo ${TF_VAR_project_name}-backend || true
         terraform apply -target=aws_ecr_repository.lambda_repo -auto-approve
 
     # pre compile python libraries
