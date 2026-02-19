@@ -1,37 +1,49 @@
 import os
 import pandas as pd
 import sqlalchemy
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 def init_db():
-    # 1. Configuration
-    # Terraform injects these into the container/environment
     db_host = os.environ.get('DB_HOST')
-    db_user = os.environ.get('DB_USER', 'adminuser')
+    db_user = os.environ.get('DB_USER')
     db_pass = os.environ.get('DB_PASS')
-    db_name = os.environ.get('DB_NAME', 'cardb')
+    db_name = os.environ.get('DB_NAME')
     
-    # 2. Connection Logic (Hybrid)
     if db_host and db_pass:
-        print(f"🚀 Detected AWS Environment. Connecting to RDS: {db_host}...")
-        # PostgreSQL Connection String
+        print(f"🚀 Detected AWS Environment. Target DB: {db_host}/{db_name}")
+        
+        root_url = f"postgresql+psycopg2://{db_user}:{db_pass}@{db_host}:5432/postgres"
+        
+        try:
+            root_engine = create_engine(root_url, isolation_level="AUTOCOMMIT")
+            with root_engine.connect() as conn:
+                check_query = text(f"SELECT 1 FROM pg_database WHERE datname='{db_name}'")
+                exists = conn.execute(check_query).fetchone()
+                
+                if not exists:
+                    print(f"⚠️ Database '{db_name}' not found. Creating...")
+                    conn.execute(text(f"CREATE DATABASE {db_name}"))
+                    print(f"✅ Created database '{db_name}' successfully.")
+                else:
+                    print(f"ℹ️ Database '{db_name}' already exists.")
+                    
+        except Exception as e:
+            print(f"⚠️ Warning: Could not check/create database. It might already exist or permissions are restricted.\nError: {e}")
+
         db_url = f"postgresql+psycopg2://{db_user}:{db_pass}@{db_host}:5432/{db_name}"
     else:
-        # Local fallback (SQLite)
         db_path = os.path.join(os.path.dirname(__file__), 'cars.db')
         print(f"⚠️ No DB_HOST found. Using local SQLite '{db_path}'...")
         db_url = f"sqlite:///{db_path}"
 
     try:
         engine = create_engine(db_url)
-        # Test connection
         with engine.connect() as conn:
-            print("✅ Connection successful.")
+            print(f"✅ Connection to '{db_name}' successful.")
     except Exception as e:
         print(f"❌ Connection failed: {e}")
         return
 
-    # 3. Hardcoded Data (From your specific list)
     cars_data = [
         # --- HYBRIDS ---
         ('Toyota', 'Prius', 2024, 'Sedan', 28000, 57, 56, 'Hybrid', 9.5, 5, 'Toyota Safety Sense 3.0, Wireless CarPlay, Solar Roof, Heated Seats', 20.3, 34.8, 7.2, "Pros: Incredible MPG, sleek new design. Cons: Rear headroom is tight.", 7, "Toyota Safety Sense™ 3.0", "https://www.toyota.com/safety-sense/", 2, 5),
@@ -63,8 +75,6 @@ def init_db():
         ('Chevrolet', 'Bolt EV', 2023, 'Hatchback', 27000, 120, 110, 'Electric', 7.0, 3, 'Super Cruise, Sport Mode, Regen on Demand Paddle', 16.6, 36.0, 6.5, "Pros: Great value EV, punchy acceleration. Cons: Slow DC fast charging speeds.", 8, "Super Cruise™", "https://www.chevrolet.com/electric/super-cruise", 2, 5)
     ]
     
-    # 4. Define Column Names
-    # Matches the schema you provided
     columns = [
         'make', 'model', 'year', 'class', 'price', 
         'city_mpg', 'hwy_mpg', 'fuel_type', 
@@ -74,14 +84,10 @@ def init_db():
         'driver_assist_link', 'offroad_capability', 'seats'
     ]
 
-    # 5. Create DataFrame
     df = pd.DataFrame(cars_data, columns=columns)
 
-    # 6. Load to DB
     print("📥 Inserting into database...")
     try:
-        # if_exists='replace' will DROP the table and recreate it with the DataFrame's schema
-        # This handles the ID auto-increment creation implicitly in Postgres (SERIAL) and SQLite (AUTOINCREMENT)
         df.to_sql('cars', engine, if_exists='replace', index=False, method='multi')
         print(f"✅ Database initialized successfully with {len(df)} records!")
     except Exception as e:
