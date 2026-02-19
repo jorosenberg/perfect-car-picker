@@ -250,6 +250,17 @@ with tab1:
                     # Reset Pitch map on new search
                     st.session_state.pitch_map = {}
 
+                    # --- AUTO-FETCH PITCH FOR TOP RESULT ---
+                    if not results_df.empty:
+                        # Grab the very first row after sorting (the "best" match)
+                        top_car = results_df.iloc[0]
+                        # Use the original index from the dataframe to store in the map
+                        top_idx = results_df.index[0]
+                        
+                        with st.spinner(f"Auto-analyzing top match: {top_car['model']}..."):
+                            pitch = api_client.get_ai_pitch(top_car, priority)
+                            st.session_state.pitch_map[top_idx] = pitch
+
     # --- RENDER RESULTS (Persistent) ---
     if st.session_state.search_results is not None:
         st.divider()
