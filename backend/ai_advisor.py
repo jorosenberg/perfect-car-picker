@@ -5,7 +5,7 @@ def get_car_pitch(car_row, priority):
     """
     Uses AWS Bedrock to generate a sales pitch.
     """
-    # Construct a prompt based on the car data
+
     prompt = f"""
     Act as a car sales expert. Write a persuasive 2-3 sentence pitch for a {car_row.get('year')} {car_row.get('make')} {car_row.get('model')}.
     The buyer's top priority is: {priority}.
@@ -14,9 +14,9 @@ def get_car_pitch(car_row, priority):
     """
     
     client = boto3.client('bedrock-runtime', region_name='us-east-1')
-    try:
-        response = client.converse(
-        modelId='amazon.nova-micro-v1:0', 
+    
+    response = client.converse(
+        modelId='global.amazon.nova-2-lite-v1:0', 
         messages=[
             {
                 "role": "user",
@@ -24,13 +24,22 @@ def get_car_pitch(car_row, priority):
             }
         ],
         inferenceConfig={
-            "maxTokens": 60,
+            "maxTokens": 300,
             "temperature": 0.7
+        },
+        additionalModelRequestFields={
+            "reasoningConfig": {
+                "type": "enabled", 
+                "maxReasoningEffort": "low" 
             }
-        )
+        }
+    )
     
-        return response['output']['message']['content'][0]['text'].strip()
-        
-    except Exception as e:
-        print(f"Bedrock Error: {e}")
-        return f"This {car_row.get('model')} is an excellent choice for {priority}. (AI Pitch unavailable)."
+    for block in response["output"]["message"]["content"]:
+        if "reasoningContent" in block:
+            reasoning_text = block["reasoningContent"]["reasoningText"]["text"]
+            print(f"Nova's thinking process: {reasoning_text}")
+        elif "text" in block:
+            return block["text"].strip()
+            
+    return "Pitch generated but format unrecognized."
