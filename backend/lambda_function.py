@@ -2,15 +2,28 @@ import json
 import os
 import pandas as pd
 import sqlalchemy
+import boto3
 from cost_calculator import calculate_tco
 from car_recommender import train_recommender_model, get_recommendations
 from ai_advisor import get_car_pitch
 
 def load_data():
-    db_host = os.environ.get('DB_HOST')
     db_user = os.environ.get('DB_USER', 'adminuser')
     db_pass = os.environ.get('DB_PASS')
     db_name = os.environ.get('DB_NAME', 'cardb')
+
+    db_host = ""
+    try:
+        print(f"Attempting to find RDS endpoint for DBName '{db_name}' via boto3...")
+        rds_client = boto3.client('rds', region_name='us-east-1')
+        response = rds_client.describe_db_instances()
+        for instance in response.get('DBInstances', []):
+            if instance.get('DBName') == db_name:
+                db_host = instance.get('Endpoint', {}).get('Address')
+                print(f"Found RDS endpoint dynamically: {db_host}")
+                break
+    except Exception as e:
+        print(f"Failed to fetch RDS endpoint via boto3: {e}")
 
     if db_host and db_pass:
         try:
