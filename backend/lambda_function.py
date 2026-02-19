@@ -24,31 +24,28 @@ def get_db_host(db_name):
         print(f"Failed to fetch RDS endpoint via boto3: {e}")
 
 def get_db_pass(aws_region='us-east-1'):
-    print("🔐 Retrieving database password from AWS Secrets Manager...")
+    print("Retrieving database password from AWS Secrets Manager...")
     try:
         secrets_client = boto3.client('secretsmanager', region_name=aws_region)
-        
-        # Dynamic lookup if environment variable is missing
-        if not db_secret_name:
-            print("DB_SECRET_NAME missing. Searching for secret dynamically...")
-            response = secrets_client.list_secrets(
-                Filters=[{'Key': 'name', 'Values': ['db-password']}]
-            )
-            if response.get('SecretList'):
-                # Grab the first matching secret
-                db_secret_name = response['SecretList'][0]['Name']
-                print(f"Found secret dynamically: {db_secret_name}")
-            else:
-                raise Exception("No matching secret found in AWS Secrets Manager.")
+
+        response = secrets_client.list_secrets(
+            Filters=[{'Key': 'name', 'Values': ['db-password']}]
+        )
+        if response.get('SecretList'):
+            # Grab the first matching secret
+            db_secret_name = response['SecretList'][0]['Name']
+            print(f"Found secret dynamically: {db_secret_name}")
+        else:
+            raise Exception("No matching secret found in AWS Secrets Manager.")
 
         if db_secret_name:
             secret_response = secrets_client.get_secret_value(SecretId=db_secret_name)
             db_pass = secret_response['SecretString']
-            print("✅ Password retrieved successfully.")
+            print("Password retrieved successfully.")
             return db_pass
         
     except Exception as e:
-        print(f"❌ Failed to fetch secret: {e}")
+        print(f"Failed to fetch secret: {e}")
 
 def load_data():
     print("--- 🔍 DB LOAD INITIATED ---")
