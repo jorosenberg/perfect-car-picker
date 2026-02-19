@@ -28,21 +28,14 @@ def get_db_pass(aws_region='us-east-1'):
     try:
         secrets_client = boto3.client('secretsmanager', region_name=aws_region)
 
-        response = secrets_client.list_secrets(
-            Filters=[{'Key': 'name', 'Values': ['db-password']}]
-        )
-        if response.get('SecretList'):
-            # Grab the first matching secret
-            db_secret_name = response['SecretList'][0]['Name']
-            print(f"Found secret dynamically: {db_secret_name}")
+        response = secrets_client.list_secrets()
+        
+        for secret in response:
+            if 'perfect-car-picker' in secret.get('Name'):
+                db_pass = secret.get('Name')
+                return db_pass
         else:
             raise Exception("No matching secret found in AWS Secrets Manager.")
-
-        if db_secret_name:
-            secret_response = secrets_client.get_secret_value(SecretId=db_secret_name)
-            db_pass = secret_response['SecretString']
-            print("Password retrieved successfully.")
-            return db_pass
         
     except Exception as e:
         print(f"Failed to fetch secret: {e}")
