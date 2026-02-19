@@ -100,6 +100,18 @@ jobs:
       working-directory: .
       run: terraform apply -auto-approve
 
+    - name: Force Lambda Update
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        FUNCTION_NAME: "${{ env.TF_VAR_project_name }}-logic"
+      run: |
+        echo "🔄 Forcing Lambda to pull new image..."
+        aws lambda update-function-code \
+          --function-name $FUNCTION_NAME \
+          --image-uri $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+          --publish
+        echo "Lambda updated successfully."
+
     # output
     - name: Output URLs
       working-directory: .
