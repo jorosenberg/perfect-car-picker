@@ -1,3 +1,40 @@
+resource "aws_iam_role_policy" "lambda_policy" {
+  name = "${var.project_name}-lambda-policy"
+  role = aws_iam_role.iam_for_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Effect   = "Allow"
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:ListFoundationModels",
+          "rds:DescribeDBInstances"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+      {
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:ListSecrets"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role" "iam_for_lambda" {
   name = "${var.project_name}-lambda-role"
   assume_role_policy = <<EOF

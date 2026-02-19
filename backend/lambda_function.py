@@ -7,6 +7,49 @@ from cost_calculator import calculate_tco
 from car_recommender import train_recommender_model, get_recommendations
 from ai_advisor import get_car_pitch
 
+def get_db_host(db_name):
+    try:
+        print(f"DB_HOST missing from Env Vars. Attempting to find RDS endpoint for DBName '{db_name}' via boto3...")
+        rds_client = boto3.client('rds', region_name='us-east-1')
+        response = rds_client.describe_db_instances()
+        for instance in response.get('DBInstances', []):
+            if instance.get('DBInstanceIdentifier') == db_name:
+                db_host = instance.get('Endpoint', {}).get('Address')
+                db_user = instance.get('MasterUsername')
+                print(f"Found RDS endpoint dynamically: {db_host}")
+                return db_host, db_user
+        if not db_host:
+            print("Could not find a matching RDS instance via boto3.")
+    except Exception as e:
+        print(f"Failed to fetch RDS endpoint via boto3: {e}")
+
+def get_db_pass(aws_region='us-east-1'):
+    print("🔐 Retrieving database password from AWS Secrets Manager...")
+    try:
+        secrets_client = boto3.client('secretsmanager', region_name=aws_region)
+        
+        # Dynamic lookup if environment variable is missing
+        if not db_secret_name:
+            print("DB_SECRET_NAME missing. Searching for secret dynamically...")
+            response = secrets_client.list_secrets(
+                Filters=[{'Key': 'name', 'Values': ['db-password']}]
+            )
+            if response.get('SecretList'):
+                # Grab the first matching secret
+                db_secret_name = response['SecretList'][0]['Name']
+                print(f"Found secret dynamically: {db_secret_name}")
+            else:
+                raise Exception("No matching secret found in AWS Secrets Manager.")
+
+        if db_secret_name:
+            secret_response = secrets_client.get_secret_value(SecretId=db_secret_name)
+            db_pass = secret_response['SecretString']
+            print("✅ Password retrieved successfully.")
+            return db_pass
+        
+    except Exception as e:
+        print(f"❌ Failed to fetch secret: {e}")
+
 def load_data():
     print("--- 🔍 DB LOAD INITIATED ---")
     db_user = os.environ.get('DB_USER', '')
@@ -19,20 +62,10 @@ def load_data():
     print(f"ENV CHECK -> DB_HOST (from env vars): '{db_host}'")
 
     if not db_host:
-        try:
-            print(f"DB_HOST missing from Env Vars. Attempting to find RDS endpoint for DBName '{db_name}' via boto3...")
-            rds_client = boto3.client('rds', region_name='us-east-1')
-            response = rds_client.describe_db_instances()
-            for instance in response.get('DBInstances', []):
-                if instance.get('DBInstanceIdentifier') == db_name:
-                    db_host = instance.get('Endpoint', {}).get('Address')
-                    db_user = instance.get('MasterUsername')
-                    print(f"Found RDS endpoint dynamically: {db_host}")
-                    break
-            if not db_host:
-                print("Could not find a matching RDS instance via boto3.")
-        except Exception as e:
-            print(f"Failed to fetch RDS endpoint via boto3: {e}")
+        db_host, db_user = get_db_host(db_name)
+
+    if not db_pass:
+        db_pass = get_db_pass()
 
     if db_host and db_pass:
         try:
