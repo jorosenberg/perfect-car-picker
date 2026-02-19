@@ -30,7 +30,7 @@ def get_db_pass(aws_region='us-east-1'):
 
         response = secrets_client.list_secrets()
         
-        for secret in response:
+        for secret in response.get('SecretList'):
             if 'perfect-car-picker' in secret.get('Name'):
                 db_pass = secret.get('Name')
                 return db_pass
