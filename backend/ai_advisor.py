@@ -1,11 +1,9 @@
-import json
 import boto3
 
 def get_car_pitch(car_row, priority):
     """
     Uses AWS Bedrock to generate a sales pitch.
     """
-
     prompt = f"""
     Act as a car sales expert. Write a persuasive 2-3 sentence pitch for a {car_row.get('year')} {car_row.get('make')} {car_row.get('model')}.
     The buyer's top priority is: {priority}.
@@ -13,33 +11,42 @@ def get_car_pitch(car_row, priority):
     Explain why this car fits their priority.
     """
     
-    client = boto3.client('bedrock-runtime', region_name='us-east-1')
-    
-    response = client.converse(
-        modelId='global.amazon.nova-2-lite-v1:0', 
-        messages=[
-            {
-                "role": "user",
-                "content": [{"text": prompt}]
+    try:
+        client = boto3.client('bedrock-runtime', region_name='us-east-1')
+        
+        response = client.converse(
+            modelId='global.amazon.nova-2-lite-v1:0', 
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"text": prompt}]
+                }
+            ],
+            inferenceConfig={
+                "maxTokens": 1000, 
+                "temperature": 0.7
+            },
+            additionalModelRequestFields={
+                "reasoningConfig": {
+                    "type": "enabled", 
+                    "maxReasoningEffort": "low" 
+                }
             }
-        ],
-        inferenceConfig={
-            "maxTokens": 300,
-            "temperature": 0.7
-        },
-        additionalModelRequestFields={
-            "reasoningConfig": {
-                "type": "enabled", 
-                "maxReasoningEffort": "low" 
-            }
-        }
-    )
-    
-    for block in response["output"]["message"]["content"]:
-        if "reasoningContent" in block:
-            reasoning_text = block["reasoningContent"]["reasoningText"]["text"]
-            print(f"Nova's thinking process: {reasoning_text}")
-        elif "text" in block:
-            return block["text"].strip()
+        )
+        
+        final_text = ""
+        
+        for block in response["output"]["message"]["content"]:
+            if "reasoningContent" in block:
+                print("Nova is reasoning... (Logging hidden from user)")
+            if "text" in block:
+                final_text += block["text"] + " "
+                
+        if final_text.strip():
+            return final_text.strip()
             
-    return "Pitch generated but format unrecognized."
+        return "Pitch generated but format unrecognized."
+        
+    except Exception as e:
+        print(f"Bedrock API Error: {e}")
+        return f"This {car_row.get('model')} is a fantastic choice for {priority}."
