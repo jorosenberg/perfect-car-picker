@@ -9,11 +9,10 @@ from ai_advisor import get_car_pitch
 
 def load_data():
     print("--- 🔍 DB LOAD INITIATED ---")
-    db_user = os.environ.get('DB_USER', 'adminuser')
+    db_user = os.environ.get('DB_USER', '')
     db_pass = os.environ.get('DB_PASS')
     db_name = os.environ.get('DB_NAME', 'cardb')
     
-    # FIX: Actually read the environment variable, don't overwrite with ""
     db_host = os.environ.get('DB_HOST', '') 
     
     print(f"ENV CHECK -> DB_USER: {db_user}, DB_NAME: {db_name}")
@@ -25,8 +24,9 @@ def load_data():
             rds_client = boto3.client('rds', region_name='us-east-1')
             response = rds_client.describe_db_instances()
             for instance in response.get('DBInstances', []):
-                if instance.get('DBName') == db_name:
+                if instance.get('DBInstanceIdentifier') == db_name:
                     db_host = instance.get('Endpoint', {}).get('Address')
+                    db_user = instance.get('MasterUsername')
                     print(f"Found RDS endpoint dynamically: {db_host}")
                     break
             if not db_host:
