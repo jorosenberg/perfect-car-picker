@@ -74,9 +74,11 @@ class APIClient:
         if not self.api_url: return {}
         
         try:
+            car_data_clean = json.loads(car_row.to_json())
+            
             payload = {
                 "action": "calculate",
-                "car_data": car_row.to_dict(),
+                "car_data": car_data_clean,
                 "inputs": inputs
             }
             response = requests.post(self.api_url, json=payload, timeout=29)
