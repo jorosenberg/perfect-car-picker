@@ -203,6 +203,10 @@ with tab1:
                 
                 recs_df = recs_df[recs_df['price'] <= calc_budget]
                 
+                # STRICT FILTER BY PRIMARY USE (Class)
+                if target_class != "Any":
+                    recs_df = recs_df[recs_df['class'] == target_class]
+                
                 if desired_features:
                     feature_aliases = {
                         "Apple CarPlay": ["carplay", "apple carplay", "apple"],
@@ -232,7 +236,7 @@ with tab1:
                     recs_df = recs_df[recs_df.apply(car_has_all_features, axis=1)]
                 
                 if recs_df.empty:
-                    st.warning("Matches found, but none met your strict Price, Fuel Type, and Must-Haves requirements. Try relaxing your filters or increasing your budget.")
+                    st.warning("Matches found, but none met your strict Price, Fuel Type, Primary Use, and Must-Haves requirements. Try relaxing your filters or increasing your budget.")
                     st.session_state.search_results = None
                 else:
                     recs_df = recs_df.head(5)
