@@ -26,7 +26,8 @@ if 'search_results' not in st.session_state:
 if 'pitch_map' not in st.session_state:
     st.session_state.pitch_map = {}
 
-@st.cache_data(show_spinner="⏳ Waking up database & loading vehicles... (This may take up to 60 seconds)")
+# ADDED ttl=300 so the cache expires every 5 minutes and tries the DB again
+@st.cache_data(ttl=300, show_spinner="⏳ Waking up database & loading vehicles... (This may take up to 60 seconds)")
 def get_cached_data():
     return load_data()
 
@@ -73,6 +74,13 @@ with st.sidebar.expander("🏦 Buying Strategy (Global)", expanded=False):
         global_down = st.number_input("Down Payment ($)", 0, 50000, 2000, step=500)
     elif global_method == "Lease":
         st.info("Lease estimates are generic (1.2% of MSRP) in the main list. Use the 'Deal Analyzer' tab for specific quotes.")
+
+# --- SIDEBAR: SYSTEM SETTINGS ---
+st.sidebar.divider()
+st.sidebar.header("🛠️ System")
+if st.sidebar.button("🔄 Force Data Refresh", help="Clears the cached fallback data and forces a fresh connection to the database."):
+    st.cache_data.clear()
+    st.rerun()
 
 # --- TABBED INTERFACE ---
 tab1, tab2, tab4 = st.tabs(["💡 Help Me Choose", "📊 Compare Cars", "💰 Deal Analyzer"])
