@@ -1,6 +1,6 @@
 resource "aws_db_subnet_group" "default" {
   name       = "${var.project_name}-db-subnet-group"
-  subnet_ids = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+  subnet_ids = [aws_subnet.public_1.id, aws_subnet.public_2.id]
 }
 
 resource "aws_db_instance" "default" {
@@ -16,7 +16,7 @@ resource "aws_db_instance" "default" {
   port                 = var.db_port
   parameter_group_name = "default.postgres16"
   skip_final_snapshot  = true
-  publicly_accessible  = false
+  publicly_accessible  = true
   vpc_security_group_ids = [aws_security_group.db_sg.id]
   db_subnet_group_name   = aws_db_subnet_group.default.name
 }
