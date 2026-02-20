@@ -11,7 +11,7 @@ st.set_page_config(page_title="Perfect Car Picker", layout="wide")
 API_URL = os.getenv("API_URL") # Injected by Terraform
 if not API_URL:
     st.error("⚠️ API_URL environment variable is missing. The app cannot connect to the backend.")
-    # We continue instead of stopping to allow UI debugging, but API calls will fail gracefully in logic.py
+    st.stop()
 
 # Initialize Client
 api_client = APIClient(API_URL)
@@ -21,13 +21,8 @@ if 'deal_car' not in st.session_state:
     st.session_state.deal_car = None
 if 'comparison_list' not in st.session_state:
     st.session_state.comparison_list = []
-# NEW: Persist search results and AI pitches
-if 'search_results' not in st.session_state:
-    st.session_state.search_results = None
-if 'pitch_map' not in st.session_state:
-    st.session_state.pitch_map = {}
 
-@st.cache_data
+@st.cache_data(show_spinner="⏳ Waking up database & loading vehicles... (This may take up to 60 seconds)")
 def get_cached_data():
     return load_data()
 
@@ -137,14 +132,13 @@ with tab1:
             c1, c2 = st.columns(2)
             with c1:
                 seats_needs = st.select_slider("Passenger Capacity", options=[2, 4, 5, 6, 7, 8], value=5)
-                pax_needs = st.select_slider("Legroom", options=["Compact", "Standard", "Spacious"])
-                
             with c2:
                 terrain_choice = st.select_slider("Off-Road", options=["City/Paved", "Bumpy/Gravel", "Off-Road"], value="City/Paved")
                 terrain_map = {"City/Paved": 2, "Bumpy/Gravel": 6, "Off-Road": 9}
                 target_offroad = terrain_map[terrain_choice]
-                perf_needs = st.select_slider("Speed", options=["Standard", "Peppy", "Fast"])
-
+            
+            pax_needs = st.select_slider("Legroom", options=["Compact", "Standard", "Spacious"])
+            perf_needs = st.select_slider("Speed", options=["Standard", "Peppy", "Fast"])
             assist_needs = st.radio("Assist Level?", ["Basic", "Mid (Lane Keep)", "Advanced (Hands-Free)"], index=1)
             feature_options = ["Apple CarPlay", "Android Auto", "Leather", "Sunroof", "AWD", "Heated Seats", "Autopilot", "3rd Row", "Tow Package"]
             desired_features = st.multiselect("Must-Haves:", feature_options)
@@ -154,8 +148,10 @@ with tab1:
 
         submitted = st.form_submit_button("🔍 Analyze & Find Matches")
 
-    # --- CALCULATION LOGIC (Only runs on Submit) ---
     if submitted:
+        st.divider()
+        st.subheader("Recommended for You")
+        
         if not fuel_choices:
             st.error("Please select at least one Fuel Type.")
         else:
@@ -176,7 +172,7 @@ with tab1:
                 
             user_prefs = {
                 'price': target_price, 'class': target_class, 
-                'fuel_type': 'Any', 
+                'fuel_type': 'Any', # Optimization handled by filtered list if using local, but here we rely on backend logic
                 'city_mpg': target_mpg, 'reliability_score': 8.0, 'luxury_score': target_luxury,
                 'rear_legroom': 36.0, 'acceleration': target_accel,
                 'cargo_space': target_cargo, 'driver_assist_score': target_assist,
@@ -186,18 +182,30 @@ with tab1:
             
             # 2. CALL API (RECOMMEND)
             with st.spinner("Finding matches via AWS Lambda..."):
+                # We send the fuel choice list so backend can filter if needed, 
+                # or we just rely on the backend finding nearest neighbors.
+                # Ideally backend handles filtering, but for now we send prefs.
+                # Note: The backend logic we built trains on ALL cars.
+                # To support fuel filtering in the backend, we would need to pass 'fuel_choices' 
+                # and have the backend filter before recommending.
+                # For this "Thin Client" version, we will just get recommendations and filter locally if needed,
+                # OR update backend. Given constraints, let's assume backend returns relevant cars.
+                
+                # To ensure strict filtering, we can pass fuel_choices in inputs and handle in backend,
+                # OR filter the results returned by API.
+                
+                # Update: Since we removed sklearn locally, we CANNOT filter before recommending locally.
+                # We will ask the API for recommendations.
                 recs_df = api_client.get_recommendations(user_prefs)
 
             if recs_df.empty:
                 st.warning("No matches found from API.")
-                st.session_state.search_results = None
             else:
                 # Filter results by fuel type (Client-side filtering of API results)
                 recs_df = recs_df[recs_df['fuel_type'].isin(fuel_choices)]
                 
                 if recs_df.empty:
                     st.warning("Matches found, but none matched your Fuel selection.")
-                    st.session_state.search_results = None
                 else:
                     tco_inputs = {
                         'years': years_ownership, 
@@ -232,71 +240,33 @@ with tab1:
                     # Sort
                     sort_cols = ["match_count", "Monthly True Cost"]
                     sort_asc = [False, True]
-                    
-                    if priority == "Performance (Speed)":
-                        sort_cols = ["match_count", "acceleration", "Monthly True Cost"]
-                        sort_asc = [False, True, True] 
-                    elif priority == "Utility (Cargo)":
-                        sort_cols = ["match_count", "cargo_space", "Monthly True Cost"]
-                        sort_asc = [False, False, True] 
-                    elif priority == "Tech & Safety":
-                        sort_cols = ["match_count", "driver_assist_score", "Monthly True Cost"]
-                        sort_asc = [False, False, True] 
-                    
                     results_df = pd.DataFrame(results).sort_values(by=sort_cols, ascending=sort_asc)
                     
-                    # SAVE TO SESSION STATE (Persist across reruns)
-                    st.session_state.search_results = results_df
-                    # Reset Pitch map on new search
-                    st.session_state.pitch_map = {}
-
-                    # --- AUTO-FETCH PITCH FOR TOP RESULT ---
-                    if not results_df.empty:
-                        # Grab the very first row after sorting (the "best" match)
-                        top_car = results_df.iloc[0]
-                        # Use the original index from the dataframe to store in the map
-                        top_idx = results_df.index[0]
+                    # Export
+                    st.download_button("📥 Download CSV", results_df.to_csv(index=False).encode('utf-8'), 'recs.csv', 'text/csv')
+                    
+                    # Display
+                    for idx, row in results_df.iterrows():
+                        cost_label = "Monthly Pmt" if global_method != 'Cash' else "Monthly TCO"
+                        cost_val = row.get('Monthly Payment', 0) if global_method != 'Cash' else row.get('Monthly True Cost', 0)
                         
-                        with st.spinner(f"Auto-analyzing top match: {top_car['model']}..."):
-                            pitch = api_client.get_ai_pitch(top_car, priority)
-                            st.session_state.pitch_map[top_idx] = pitch
+                        with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=True):
+                            c1, c2, c3, c4 = st.columns(4)
+                            c1.metric("Price", f"${row.get('price',0):,.0f}")
+                            c2.metric("Monthly Flow", f"${row.get('Monthly Cash Flow',0):.0f}")
+                            c3.metric("MPG/MPGe", f"{row.get('Est MPG', row.get('city_mpg'))}")
+                            c4.metric("Resale", f"${row.get('Resale Value',0):,.0f}")
+                            
+                            if 'source' in row: st.caption(f"⚡ {row['source']}")
 
-    # --- RENDER RESULTS (Persistent) ---
-    if st.session_state.search_results is not None:
-        st.divider()
-        st.subheader("Recommended for You")
-        
-        results_df = st.session_state.search_results
-        
-        st.download_button("📥 Download Results as CSV", results_df.to_csv(index=False).encode('utf-8'), 'recs.csv', 'text/csv')
-        
-        for idx, row in results_df.iterrows():
-            cost_label = "Monthly Pmt" if global_method != 'Cash' else "Monthly TCO"
-            cost_val = row.get('Monthly Payment', 0) if global_method != 'Cash' else row.get('Monthly True Cost', 0)
-            
-            with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=True):
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Price", f"${row.get('price',0):,.0f}")
-                c2.metric("Monthly Flow", f"${row.get('Monthly Cash Flow',0):.0f}", help="Pmt + Fuel + Ins + Maint + Subs")
-                c3.metric("MPG/MPGe", f"{row.get('Est MPG', row.get('city_mpg'))}", help="Weighted by driving habits & climate")
-                c4.metric("Seats", f"{row.get('seats', 5)}") 
-                
-                if 'source' in row: st.caption(f"⚡ {row['source']}")
+                            if st.button(f"🤖 Why buy this?", key=f"ai_{idx}"):
+                                with st.spinner("Asking AI..."):
+                                    pitch = api_client.get_ai_pitch(row, priority)
+                                    st.info(pitch)
 
-                # AI PITCH BUTTON
-                # Logic: If clicked, fetch pitch, update session state, then display from session state
-                if st.button(f"🤖 Why buy this?", key=f"ai_{idx}"):
-                    with st.spinner("Asking AI..."):
-                        pitch = api_client.get_ai_pitch(row, priority)
-                        st.session_state.pitch_map[idx] = pitch
-                
-                # Render Pitch if exists
-                if idx in st.session_state.pitch_map:
-                    st.info(st.session_state.pitch_map[idx])
-
-                if st.button(f"💰 Deep Dive", key=f"btn_{idx}"):
-                    st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
-                    st.success("Sent to Deal Analyzer!")
+                            if st.button(f"💰 Deep Dive", key=f"btn_{idx}"):
+                                st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
+                                st.success("Sent to Deal Analyzer!")
 
 # === TAB 2: COMPARE ===
 with tab2:
@@ -366,16 +336,13 @@ with tab4:
         
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("1. Deal Settings")
-            deal_method = st.radio("Buying Method", ["Cash", "Finance", "Lease"])
-            price_input = st.number_input("Negotiated Price ($)", value=int(car_row['price']), step=500)
-            
-            st.markdown("**Insurance Override**")
-            custom_ins = st.number_input("Custom Quote ($/Month)", 0, 1000, 0, help="Leave 0 to use estimate")
+            deal_method = st.radio("Method", ["Cash", "Finance", "Lease"])
+            price_input = st.number_input("Price ($)", value=int(car_row['price']))
+            custom_ins = st.number_input("Insurance Quote ($/mo)", 0)
             
             analysis_years = 5 
             if deal_method != "Lease":
-                analysis_years = st.number_input("Analysis Duration (Years)", min_value=1, max_value=15, value=5, step=1)
+                analysis_years = st.number_input("Analysis Years", 1, 15, 5)
             
             user_inputs = {
                 'years': analysis_years, 'annual_miles': 12000, 
@@ -384,13 +351,13 @@ with tab4:
             }
             
             if deal_method == "Finance":
-                user_inputs['apr'] = st.number_input("APR (%)", value=6.0, step=0.1)
-                user_inputs['term'] = st.number_input("Loan Term (Months)", value=60, step=12)
-                user_inputs['down_payment'] = st.number_input("Down Payment ($)", value=2000, step=500)
+                user_inputs['apr'] = st.number_input("APR %", 0.0, 30.0, 6.0)
+                user_inputs['term'] = st.number_input("Term (Mos)", 12, 96, 60)
+                user_inputs['down_payment'] = st.number_input("Down ($)", 0, 50000, 2000)
             elif deal_method == "Lease":
-                user_inputs['lease_monthly'] = st.number_input("Monthly Payment ($)", value=500, step=10)
-                user_inputs['lease_due'] = st.number_input("Due at Signing ($)", value=2000, step=100)
-                user_inputs['lease_term'] = st.number_input("Lease Term (Months)", value=36, step=12)
+                user_inputs['lease_monthly'] = st.number_input("Monthly ($)", 0, 2000, 500)
+                user_inputs['lease_due'] = st.number_input("Due at Signing ($)", 0, 10000, 2000)
+                user_inputs['lease_term'] = st.number_input("Term (Mos)", 12, 60, 36)
                 user_inputs['years'] = user_inputs['lease_term'] / 12
 
         # CALL API FOR CALCULATION
@@ -404,60 +371,16 @@ with tab4:
             costs['Monthly True Cost'] += total_subs
 
         with col2:
-            st.subheader("2. Cost Breakdown")
+            st.subheader("Results")
             if not costs:
                 st.error("Calculation failed via API")
             else:
-                total_label = "Total Period"
-                if deal_method == "Lease":
-                    term = int(user_inputs.get('lease_term', 36))
-                    total_label = f"Total ({term} Mos)"
-                else:
-                    total_label = f"Total ({analysis_years} Yrs)"
-                    
-                view_mode = st.radio("Timeframe", ["Monthly", "Yearly", total_label], horizontal=True)
-                show_dep = st.checkbox("Include Depreciation in Total?", value=False)
-                
-                if view_mode == "Yearly":
-                    mult = 12
-                elif view_mode == total_label:
-                    if deal_method == "Lease":
-                        mult = user_inputs.get('lease_term', 36)
-                    else:
-                        mult = analysis_years * 12
-                else:
-                    mult = 1
-                
-                display_cost = costs['Monthly True Cost'] * mult if show_dep else costs['Monthly Cash Flow'] * mult
-                subtext = "Includes Dep/Equity Loss" if show_dep else "Running Cash Flow"
-                if view_mode == total_label and not show_dep:
-                    display_cost += costs['Upfront Cost']
-                    subtext = "Cash Flow + Upfront"
-
                 m1, m2 = st.columns(2)
-                m1.metric(f"Cost ({view_mode})", f"${display_cost:,.2f}", delta=subtext)
-                m2.metric("Payment Portion", f"${costs['Monthly Payment'] * mult:,.2f}")
+                m1.metric("Monthly Cost", f"${costs['Monthly Cash Flow']:.2f}")
+                m2.metric("True Cost (inc Dep)", f"${costs['Monthly True Cost']:.2f}")
                 
                 if st.button("➕ Add to Compare"):
                     snap = car_row_calc.to_dict()
                     snap.update(costs)
                     st.session_state.comparison_list.append(snap)
                     st.success("Added!")
-
-                val_pay = costs['Monthly Payment'] * mult
-                val_fuel = costs['Monthly Fuel'] * mult
-                val_ins = costs['Monthly Ins'] * mult
-                val_maint = costs['Monthly Maint'] * mult
-                val_dep = costs['Monthly Dep'] * mult
-                val_subs = total_subs * mult
-                
-                breakdown_data = {
-                    "Cost Component": ["Vehicle Payment", "Fuel / Charging", "Insurance", "Maintenance", "Subscriptions", "Depreciation (Hidden)"],
-                    f"Cost ({view_mode})": [val_pay, val_fuel, val_ins, val_maint, val_subs, val_dep]
-                }
-                if view_mode == total_label and costs['Upfront Cost'] > 0:
-                    breakdown_data["Cost Component"].append("Upfront Due")
-                    breakdown_data[f"Cost ({view_mode})"].append(costs['Upfront Cost'])
-
-                bd_df = pd.DataFrame(breakdown_data)
-                st.bar_chart(bd_df.set_index("Cost Component"))
