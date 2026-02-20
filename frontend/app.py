@@ -361,76 +361,87 @@ with tab2:
         if compare_selection:
             rows_to_display = []
             
-            # Use global inputs for standard DB cars to calculate costs dynamically
-            global_tco_inputs = {
-                'gas_price': gas_price, 
-                'elec_price': elec_price,
-                'elec_price_road': elec_price_fast,
-                'method': global_method, 'apr': global_apr, 'term': global_term, 'down_payment': global_down,
-                'commute_dist': commute_dist, 'days_week': days_week, 'commute_type': commute_type,
-                'road_trip_miles': road_trip_miles, 'other_miles': other_miles,
-                'climate': env_climate, 'terrain': env_terrain,
-                'driver_age': driver_age_est
-            }
-            
-            with st.spinner("Calculating multi-year costs..."):
-                for sel in compare_selection:
-                    if sel in deal_options:
-                        found_deal = next(d for d in custom_deals if d['display_name'] == sel).copy()
-                        deal_inputs = found_deal.get('deal_inputs', global_tco_inputs)
-                        
-                        # Calculate 1, 3, and 5 year projections based on the user's deal setup
-                        for y in [1, 3, 5]:
-                            temp_inputs = deal_inputs.copy()
-                            temp_inputs['years'] = y
-                            costs = api_client.calculate_tco(found_deal, temp_inputs)
-                            if costs:
-                                found_deal[f'Total Cost ({y} yr)'] = (costs['Monthly True Cost'] + total_subs) * 12 * y
-                            else:
-                                found_deal[f'Total Cost ({y} yr)'] = 0
-                        rows_to_display.append(found_deal)
-                    else:
-                        row = df_display[df_display['display_name'] == sel].iloc[0].to_dict()
-                        
-                        # Add standard TCO costs so the raw database cars populate correctly in the top rows
-                        base_costs = api_client.calculate_tco(row, global_tco_inputs)
-                        if base_costs:
-                            row['Monthly Payment'] = base_costs['Monthly Payment']
-                            row['Monthly True Cost'] = base_costs['Monthly True Cost'] + total_subs
-                            row['Resale Value'] = base_costs['Resale Value']
-                            
-                        # Calculate 1, 3, and 5 year projections using global profile
-                        for y in [1, 3, 5]:
-                            temp_inputs = global_tco_inputs.copy()
-                            temp_inputs['years'] = y
-                            costs = api_client.calculate_tco(row, temp_inputs)
-                            if costs:
-                                row[f'Total Cost ({y} yr)'] = (costs['Monthly True Cost'] + total_subs) * 12 * y
-                            else:
-                                row[f'Total Cost ({y} yr)'] = 0
-                        rows_to_display.append(row)
+            for sel in compare_selection:
+                if sel in deal_options:
+                    found_deal = next(d for d in custom_deals if d['display_name'] == sel).copy()
+                    rows_to_display.append(found_deal)
+                else:
+                    row = df_display[df_display['display_name'] == sel].iloc[0].to_dict()
+                    rows_to_display.append(row)
             
             comp_df = pd.DataFrame(rows_to_display)
             
             st.markdown("### Specifications")
             base_cols = ['make', 'model', 'price', 'city_mpg', 'acceleration', 'seats', 'reliability_score']
-            tco_cols = ['Monthly Payment', 'Monthly True Cost', 'Resale Value', 'Total Cost (1 yr)', 'Total Cost (3 yr)', 'Total Cost (5 yr)']
-            present_cols = [c for c in tco_cols if c in comp_df.columns]
-            final_cols = ['display_name'] + base_cols + present_cols
+            present_base_cols = [c for c in base_cols if c in comp_df.columns]
+            final_cols = ['display_name'] + present_base_cols
             
-            # Create a separate formatted dataframe so we don't break the numeric types for the chart
-            formatted_df = comp_df[final_cols].copy()
-            money_cols = ['price', 'Monthly Payment', 'Monthly True Cost', 'Resale Value', 'Total Cost (1 yr)', 'Total Cost (3 yr)', 'Total Cost (5 yr)']
-            for c in money_cols:
-                if c in formatted_df.columns:
-                    formatted_df[c] = formatted_df[c].apply(lambda x: f"${x:,.0f}" if pd.notnull(x) and isinstance(x, (int, float)) else x)
+            # Format price for base table
+            formatted_base_df = comp_df[final_cols].copy()
+            if 'price' in formatted_base_df.columns:
+                formatted_base_df['price'] = formatted_base_df['price'].apply(lambda x: f"${x:,.0f}" if pd.notnull(x) and isinstance(x, (int, float)) else x)
             
-            comp_display = formatted_df.set_index('display_name').transpose()
+            comp_display = formatted_base_df.set_index('display_name').transpose()
             st.dataframe(comp_display.astype(str))
             
             st.markdown("### Performance Chart")
             fig = px.scatter(comp_df, x='price', y='acceleration', color='make', size='city_mpg', hover_data=['model'])
             st.plotly_chart(fig, use_container_width=True)
+            
+            st.divider()
+            st.markdown("### 🧮 Total Cost of Ownership (TCO)")
+            st.info("Calculate depreciation, fuel, insurance, and maintenance costs over 1, 3, and 5 years based on your global settings.")
+            
+            if st.button("Calculate TCO for Selected Cars", type="primary"):
+                global_tco_inputs = {
+                    'gas_price': gas_price, 
+                    'elec_price': elec_price,
+                    'elec_price_road': elec_price_fast,
+                    'method': global_method, 'apr': global_apr, 'term': global_term, 'down_payment': global_down,
+                    'commute_dist': commute_dist, 'days_week': days_week, 'commute_type': commute_type,
+                    'road_trip_miles': road_trip_miles, 'other_miles': other_miles,
+                    'climate': env_climate, 'terrain': env_terrain,
+                    'driver_age': driver_age_est
+                }
+                
+                with st.spinner("Calculating multi-year costs via API..."):
+                    tco_rows = []
+                    for sel_row in rows_to_display:
+                        row_copy = sel_row.copy()
+                        deal_inputs = row_copy.get('deal_inputs', global_tco_inputs)
+                        
+                        # Base calculations
+                        base_costs = api_client.calculate_tco(row_copy, deal_inputs)
+                        if base_costs:
+                            row_copy['Monthly Payment'] = base_costs.get('Monthly Payment', 0)
+                            row_copy['Monthly True Cost'] = base_costs.get('Monthly True Cost', 0) + total_subs
+                            row_copy['Resale Value'] = base_costs.get('Resale Value', 0)
+                            
+                        # Calculate 1, 3, and 5 year projections
+                        for y in [1, 3, 5]:
+                            temp_inputs = deal_inputs.copy()
+                            temp_inputs['years'] = y
+                            costs = api_client.calculate_tco(row_copy, temp_inputs)
+                            if costs:
+                                row_copy[f'Total Cost ({y} yr)'] = (costs.get('Monthly True Cost', 0) + total_subs) * 12 * y
+                            else:
+                                row_copy[f'Total Cost ({y} yr)'] = 0
+                                
+                        tco_rows.append(row_copy)
+                        
+                    tco_df = pd.DataFrame(tco_rows)
+                    
+                    tco_cols = ['Monthly Payment', 'Monthly True Cost', 'Resale Value', 'Total Cost (1 yr)', 'Total Cost (3 yr)', 'Total Cost (5 yr)']
+                    present_tco_cols = [c for c in tco_cols if c in tco_df.columns]
+                    final_tco_cols = ['display_name'] + present_tco_cols
+                    
+                    formatted_tco_df = tco_df[final_tco_cols].copy()
+                    for c in present_tco_cols:
+                        formatted_tco_df[c] = formatted_tco_df[c].apply(lambda x: f"${x:,.0f}" if pd.notnull(x) and isinstance(x, (int, float)) else x)
+                    
+                    tco_display = formatted_tco_df.set_index('display_name').transpose()
+                    st.markdown("#### TCO Results")
+                    st.dataframe(tco_display.astype(str))
 
 with tab4:
     st.header("💰 Deal Analyzer")
