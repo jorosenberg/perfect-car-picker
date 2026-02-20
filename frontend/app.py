@@ -136,10 +136,14 @@ with tab1:
             st.markdown("### 3. Ownership")
             years_ownership = st.slider("Keep car for (Years)", 1, 15, 5)
 
-            st.markdown("### 4. Luxury & Comfort")
+            st.markdown("### 4. Luxury, Comfort & Fun")
             lux_choice = st.select_slider("Luxury Level", options=["Economy/Basic", "Standard/Mid", "Luxury/Premium"], value="Standard/Mid")
             lux_map = {"Economy/Basic": 3, "Standard/Mid": 6, "Luxury/Premium": 9}
             target_luxury = lux_map[lux_choice]
+            
+            fun_choice = st.select_slider("Fun Factor (Driving Dynamics)", options=["Practical", "Engaging", "Thrilling (Sports)"], value="Engaging")
+            fun_map = {"Practical": 3, "Engaging": 6, "Thrilling (Sports)": 10}
+            target_fun = fun_map[fun_choice]
 
         with col_q2:
             st.markdown("### 5. Fuel & Driving")
@@ -201,7 +205,8 @@ with tab1:
             user_prefs = {
                 'price': target_price_final, 'class': target_class, 
                 'fuel_type': 'Any', 
-                'city_mpg': target_mpg, 'reliability_score': 8.0, 'luxury_score': target_luxury,
+                'city_mpg': target_mpg, 'reliability_score': 8.0, 
+                'luxury_score': target_luxury, 'fun_score': target_fun,
                 'rear_legroom': target_legroom, 'acceleration': target_accel,
                 'cargo_space': target_cargo_final, 'driver_assist_score': target_assist,
                 'offroad_capability': target_offroad,
