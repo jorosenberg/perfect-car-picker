@@ -21,6 +21,10 @@ if 'deal_car' not in st.session_state:
     st.session_state.deal_car = None
 if 'comparison_list' not in st.session_state:
     st.session_state.comparison_list = []
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = None
+if 'pitch_map' not in st.session_state:
+    st.session_state.pitch_map = {}
 
 @st.cache_data(show_spinner="⏳ Waking up database & loading vehicles... (This may take up to 60 seconds)")
 def get_cached_data():
@@ -148,12 +152,11 @@ with tab1:
 
         submitted = st.form_submit_button("🔍 Analyze & Find Matches")
 
+    # --- PROCESS SUBMISSION ---
     if submitted:
-        st.divider()
-        st.subheader("Recommended for You")
-        
         if not fuel_choices:
             st.error("Please select at least one Fuel Type.")
+            st.session_state.search_results = None
         else:
             # 1. MAP PREFERENCES
             if "Electric" in fuel_choices: target_mpg = 110
@@ -172,7 +175,7 @@ with tab1:
                 
             user_prefs = {
                 'price': target_price, 'class': target_class, 
-                'fuel_type': 'Any', # Optimization handled by filtered list if using local, but here we rely on backend logic
+                'fuel_type': 'Any', 
                 'city_mpg': target_mpg, 'reliability_score': 8.0, 'luxury_score': target_luxury,
                 'rear_legroom': 36.0, 'acceleration': target_accel,
                 'cargo_space': target_cargo, 'driver_assist_score': target_assist,
@@ -182,30 +185,18 @@ with tab1:
             
             # 2. CALL API (RECOMMEND)
             with st.spinner("Finding matches via AWS Lambda..."):
-                # We send the fuel choice list so backend can filter if needed, 
-                # or we just rely on the backend finding nearest neighbors.
-                # Ideally backend handles filtering, but for now we send prefs.
-                # Note: The backend logic we built trains on ALL cars.
-                # To support fuel filtering in the backend, we would need to pass 'fuel_choices' 
-                # and have the backend filter before recommending.
-                # For this "Thin Client" version, we will just get recommendations and filter locally if needed,
-                # OR update backend. Given constraints, let's assume backend returns relevant cars.
-                
-                # To ensure strict filtering, we can pass fuel_choices in inputs and handle in backend,
-                # OR filter the results returned by API.
-                
-                # Update: Since we removed sklearn locally, we CANNOT filter before recommending locally.
-                # We will ask the API for recommendations.
                 recs_df = api_client.get_recommendations(user_prefs)
 
             if recs_df.empty:
                 st.warning("No matches found from API.")
+                st.session_state.search_results = None
             else:
-                # Filter results by fuel type (Client-side filtering of API results)
+                # Filter results by fuel type 
                 recs_df = recs_df[recs_df['fuel_type'].isin(fuel_choices)]
                 
                 if recs_df.empty:
                     st.warning("Matches found, but none matched your Fuel selection.")
+                    st.session_state.search_results = None
                 else:
                     tco_inputs = {
                         'years': years_ownership, 
@@ -230,7 +221,6 @@ with tab1:
                             car_data['Monthly Cash Flow'] += total_subs
                             car_data['Monthly True Cost'] += total_subs
                         
-                        # Match Count Logic (Simple string check)
                         car_features = [f.strip() for f in car_data.get('features', '').split(',')]
                         matches = [f for f in desired_features if any(f.lower() in feat.lower() for feat in car_features)]
                         car_data['match_count'] = len(matches)
@@ -242,31 +232,54 @@ with tab1:
                     sort_asc = [False, True]
                     results_df = pd.DataFrame(results).sort_values(by=sort_cols, ascending=sort_asc)
                     
-                    # Export
-                    st.download_button("📥 Download CSV", results_df.to_csv(index=False).encode('utf-8'), 'recs.csv', 'text/csv')
+                    # Save into session state to persist it across reruns
+                    st.session_state.search_results = results_df
+                    st.session_state.pitch_map = {} # Reset pitches for a new search
                     
-                    # Display
-                    for idx, row in results_df.iterrows():
-                        cost_label = "Monthly Pmt" if global_method != 'Cash' else "Monthly TCO"
-                        cost_val = row.get('Monthly Payment', 0) if global_method != 'Cash' else row.get('Monthly True Cost', 0)
-                        
-                        with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=True):
-                            c1, c2, c3, c4 = st.columns(4)
-                            c1.metric("Price", f"${row.get('price',0):,.0f}")
-                            c2.metric("Monthly Flow", f"${row.get('Monthly Cash Flow',0):.0f}")
-                            c3.metric("MPG/MPGe", f"{row.get('Est MPG', row.get('city_mpg'))}")
-                            c4.metric("Resale", f"${row.get('Resale Value',0):,.0f}")
-                            
-                            if 'source' in row: st.caption(f"⚡ {row['source']}")
+                    # Auto-analyze the top match
+                    if not results_df.empty:
+                        top_idx = results_df.index[0]
+                        top_car = results_df.iloc[0]
+                        with st.spinner(f"Auto-analyzing top match: {top_car['model']}..."):
+                            pitch = api_client.get_ai_pitch(top_car, priority)
+                            st.session_state.pitch_map[top_idx] = pitch
 
-                            if st.button(f"🤖 Why buy this?", key=f"ai_{idx}"):
-                                with st.spinner("Asking AI..."):
-                                    pitch = api_client.get_ai_pitch(row, priority)
-                                    st.info(pitch)
+    # --- RENDER RESULTS (Persists across button clicks) ---
+    if st.session_state.search_results is not None:
+        st.divider()
+        st.subheader("Recommended for You")
+        
+        results_df = st.session_state.search_results
+        st.download_button("📥 Download CSV", results_df.to_csv(index=False).encode('utf-8'), 'recs.csv', 'text/csv')
+        
+        for idx, row in results_df.iterrows():
+            cost_label = "Monthly Pmt" if global_method != 'Cash' else "Monthly TCO"
+            cost_val = row.get('Monthly Payment', 0) if global_method != 'Cash' else row.get('Monthly True Cost', 0)
+            
+            with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=True):
+                # Always show pitch if we have one for this car
+                if idx in st.session_state.pitch_map:
+                    st.info(f"🤖 **AI Analysis:** {st.session_state.pitch_map[idx]}")
 
-                            if st.button(f"💰 Deep Dive", key=f"btn_{idx}"):
-                                st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
-                                st.success("Sent to Deal Analyzer!")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Price", f"${row.get('price',0):,.0f}")
+                c2.metric("Monthly Flow", f"${row.get('Monthly Cash Flow',0):.0f}")
+                c3.metric("MPG/MPGe", f"{row.get('Est MPG', row.get('city_mpg'))}")
+                c4.metric("Resale", f"${row.get('Resale Value',0):,.0f}")
+                
+                if 'source' in row: st.caption(f"⚡ {row['source']}")
+
+                # Only show button if we haven't fetched the pitch yet
+                if idx not in st.session_state.pitch_map:
+                    if st.button(f"🤖 Why buy this?", key=f"ai_{idx}"):
+                        with st.spinner("Asking AI..."):
+                            pitch = api_client.get_ai_pitch(row, priority)
+                            st.session_state.pitch_map[idx] = pitch
+                            st.rerun() # Force an immediate UI update
+
+                if st.button(f"💰 Deep Dive", key=f"btn_{idx}"):
+                    st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
+                    st.success("Sent to Deal Analyzer!")
 
 # === TAB 2: COMPARE ===
 with tab2:
@@ -316,7 +329,7 @@ with tab2:
             fig = px.scatter(comp_df, x='price', y='acceleration', color='make', size='city_mpg', hover_data=['model'])
             st.plotly_chart(fig, use_container_width=True)
 
-# === TAB 4: DEAL ANALYZER ===
+# === TAB 4: DEAL Analyzer ===
 with tab4:
     st.header("💰 Deal Analyzer")
     
