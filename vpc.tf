@@ -156,3 +156,14 @@ resource "aws_route_table_association" "public_2" {
   subnet_id      = aws_subnet.public_2.id
   route_table_id = aws_route_table.public_rt.id
 }
+
+# do i really have to do this
+resource "aws_route_table_association" "private_1_to_public" {
+  subnet_id      = aws_subnet.private_1.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+resource "aws_route_table_association" "private_2_to_public" {
+  subnet_id      = aws_subnet.private_2.id
+  route_table_id = aws_route_table.public_rt.id
+}

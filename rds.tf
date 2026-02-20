@@ -1,5 +1,6 @@
 resource "aws_db_subnet_group" "default" {
   name       = "${var.project_name}-db-subnet-group"
+  # can't delete private subnets currently in use
   subnet_ids = [aws_subnet.public.id, aws_subnet.public_2.id, aws_subnet.private_1.id, aws_subnet.private_2.id]
 }
 
