@@ -41,7 +41,7 @@ st.title("🚗 Perfect Car Picker")
 if len(df_full) > 10:
     st.success(f"✅ **Live Database Connected!** Loaded {len(df_full)} vehicles from API.")
 else:
-    st.error(f"🔌 **Live Database Connection Failed!** Displaying {len(df_full)} offline fallback vehicles.")
+    st.error(f"🔌 **Live Database Connection Failed!** Displaying {len(df_full)} offline fallback vehicles. Please refresh database if first time starting app.")
     st.info("Check backend logs or ensure the database has been seeded with `init_db.py`.")
 
 st.markdown("""
