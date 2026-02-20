@@ -6,46 +6,21 @@ import json
 import sqlalchemy
 import time
 
-# --- 1. DATA LOADING (For UI Dropdowns) ---
-def load_data():
+def load_data(api_url):
     """
     Loads basic vehicle data to populate UI lists (Make, Model, etc.).
-    This is lightweight and does not require ML libraries.
+    Now fetches cleanly from the Backend API instead of a direct DB connection.
     """
-    db_host = os.environ.get('DB_HOST')
-    db_user = os.environ.get('DB_USER', 'adminuser')
-    db_pass = os.environ.get('DB_PASS')
-    db_name = os.environ.get('DB_NAME', 'cardb')
+    print("DEBUG (load_data): Requesting full vehicle database from Backend API...")
 
-    print(f"DEBUG (load_data): DB_HOST='{db_host}', DB_USER='{db_user}', DB_NAME='{db_name}'")
-
-    if db_host and db_pass:
-        try:
-            db_url = f"postgresql+psycopg2://{db_user}:{db_pass}@{db_host}:5432/{db_name}"
-            # Short connect timeout so Streamlit doesn't hang endlessly on a bad ping
-            engine = sqlalchemy.create_engine(
-                db_url, 
-                connect_args={'connect_timeout': 5}
-            )
+    if api_url:
+        client = APIClient(api_url)
+        df = client.get_all_cars()
+        if not df.empty:
+            print(f"✅ Successfully loaded {len(df)} cars via API.")
+            return df
             
-            # Ping up to 12 times (60 seconds total) to wait for RDS to wake up
-            max_retries = 12
-            for attempt in range(max_retries):
-                try:
-                    df = pd.read_sql("SELECT * FROM cars", engine)
-                    print(f"✅ Successfully connected to RDS. Loaded {len(df)} cars.")
-                    return df
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        print(f"⏳ RDS not ready. Retrying in 5 seconds... ({attempt + 1}/{max_retries})")
-                        time.sleep(5)
-                    else:
-                        print(f"❌ RDS Connection Failed after 60 seconds: {e}")
-        except Exception as e:
-            print(f"❌ RDS Configuration Failed: {e}")
-            
-    print("⚠️ Returning fallback data to prevent 'No cars loaded' error in UI.")
-    # Fallback data ensures that if Streamlit caches the result on a bad boot, Tabs 2 and 4 still work.
+    print("⚠️ API returned empty or failed. Returning fallback data to prevent UI crash.")
     fallback_data = [
         {'make': 'Toyota', 'model': 'Prius', 'year': 2024, 'class': 'Sedan', 'price': 28000, 'city_mpg': 57, 'hwy_mpg': 56, 'fuel_type': 'Hybrid', 'reliability_score': 9.5, 'luxury_score': 5, 'features': 'Toyota Safety Sense 3.0', 'cargo_space': 20.3, 'rear_legroom': 34.8, 'acceleration': 7.2, 'driver_assist_score': 7, 'offroad_capability': 2, 'seats': 5},
         {'make': 'Honda', 'model': 'CR-V Hybrid', 'year': 2024, 'class': 'SUV', 'price': 34000, 'city_mpg': 43, 'hwy_mpg': 36, 'fuel_type': 'Hybrid', 'reliability_score': 9.0, 'luxury_score': 6, 'features': 'Honda Sensing', 'cargo_space': 39.3, 'rear_legroom': 41.0, 'acceleration': 7.6, 'driver_assist_score': 6, 'offroad_capability': 5, 'seats': 5},
@@ -56,7 +31,6 @@ def load_data():
     ]
     return pd.DataFrame(fallback_data)
 
-# --- 2. API CLIENT (Thin Client Logic) ---
 class APIClient:
     """
     Handles all communication with the Backend Lambda.
@@ -64,6 +38,20 @@ class APIClient:
     """
     def __init__(self, api_url):
         self.api_url = api_url
+
+    def get_all_cars(self):
+        """Call Lambda to get the full database of cars"""
+        if not self.api_url: return pd.DataFrame()
+        
+        try:
+            payload = {"action": "get_all_cars"}
+            response = requests.post(self.api_url, json=payload, timeout=29)
+            if response.status_code == 200:
+                return pd.DataFrame(response.json())
+            return pd.DataFrame()
+        except Exception as e:
+            print(f"API Error (Get All Cars): {e}")
+            return pd.DataFrame()
 
     def get_recommendations(self, user_prefs):
         """Call Lambda to get ML Recommendations"""
@@ -74,7 +62,6 @@ class APIClient:
                 "action": "recommend",
                 "inputs": user_prefs
             }
-            # Timeout set to 29s to match AWS API Gateway limits
             response = requests.post(self.api_url, json=payload, timeout=29)
             if response.status_code == 200:
                 return pd.DataFrame(response.json())
@@ -90,8 +77,6 @@ class APIClient:
             return {}
         
         try:
-            # FIX: Convert pandas Series to native Python types for JSON serialization.
-            # Using .to_json() then json.loads() cleanly strips numpy data types (like int64).
             car_data_clean = json.loads(car_row.to_json())
             
             payload = {
@@ -123,7 +108,6 @@ class APIClient:
         if not self.api_url: return "API Not Configured"
         
         try:
-            # FIX: Convert pandas Series to native Python types for JSON serialization.
             car_data_clean = json.loads(car_row.to_json())
             
             payload = {

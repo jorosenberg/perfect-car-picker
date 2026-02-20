@@ -113,12 +113,26 @@ def lambda_handler(event, context):
         
         result = {}
 
-        if action == 'recommend':
+        if action == 'refresh':
+            print("Processing Refresh Request...")
+            global _model, _preprocessor, _df
+            _model = None
+            _preprocessor = None
+            _df = None
+            df, model, preprocessor = get_model_assets()
+            result = {"status": "success", "message": f"Cache refreshed. Loaded {len(df)} cars."}
+
+        elif action == 'recommend':
             print("Processing Recommendation Request...")
             df, model, preprocessor = get_model_assets()
             recommendations_df = get_recommendations(inputs, df, model, preprocessor)
             result = recommendations_df.to_dict(orient='records')
             
+        elif action == 'get_all_cars':
+            print("Processing Get All Cars Request...")
+            df, model, preprocessor = get_model_assets()
+            result = df.to_dict(orient='records')
+
         elif action == 'calculate':
             print("Processing Calculation Request...")
             if not car_data:
