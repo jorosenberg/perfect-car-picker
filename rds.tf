@@ -1,6 +1,6 @@
 resource "aws_db_subnet_group" "default" {
   name       = "${var.project_name}-db-subnet-group"
-  subnet_ids = [aws_subnet.public.id, aws_subnet.public_2.id]
+  subnet_ids = [aws_subnet.public.id, aws_subnet.public_2.id, aws_subnet.private_1.id, aws_subnet.private_2.id]
 }
 
 resource "aws_db_instance" "default" {
