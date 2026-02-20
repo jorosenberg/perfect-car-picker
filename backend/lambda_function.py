@@ -32,7 +32,8 @@ def get_db_pass(aws_region='us-east-1'):
         
         for secret in response.get('SecretList'):
             if 'perfect-car-picker' in secret.get('Name'):
-                db_pass = secret.get('Name')
+                secret_name = secret.get('Name')
+                db_pass = secrets_client.get_secret_value(SecretId=secret_name)['SecretString']
                 return db_pass
         else:
             raise Exception("No matching secret found in AWS Secrets Manager.")
