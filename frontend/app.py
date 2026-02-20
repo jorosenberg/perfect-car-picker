@@ -2,64 +2,48 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-import requests
-import json
-from logic import load_data, CarRecommender, CostCalculator, ResaleModel, AIAdvisor
+from logic import load_data, APIClient
 
 # Page Config
 st.set_page_config(page_title="Perfect Car Picker", layout="wide")
 
 # --- CLOUD INTEGRATION CHECK ---
 API_URL = os.getenv("API_URL") # Injected by Terraform User Data
+if not API_URL:
+    st.error("⚠️ API_URL environment variable is missing. The app cannot connect to the backend.")
+    st.stop()
+
+# Initialize API Client (Thin Client Mode)
+api_client = APIClient(API_URL)
 
 # --- INITIALIZE SESSION STATE ---
 if 'deal_car' not in st.session_state:
     st.session_state.deal_car = None
 if 'comparison_list' not in st.session_state:
     st.session_state.comparison_list = []
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = None
+if 'pitch_map' not in st.session_state:
+    st.session_state.pitch_map = {}
 
-@st.cache_data
+# We no longer need ttl=300 because we have the manual refresh button!
+@st.cache_data(show_spinner="⏳ Loading vehicles from Backend API...")
 def get_cached_data():
-    return load_data()
+    return load_data(API_URL)
 
-# --- REMOTE CALCULATION HELPER ---
-def get_tco_result(car_row, inputs, resale_model_local=None):
-    """
-    Decides whether to calculate locally or use AWS Lambda API.
-    """
-    if API_URL:
-        # Cloud Mode
-        try:
-            payload = {
-                "car_data": car_row.to_dict(),
-                "inputs": inputs
-            }
-            response = requests.post(API_URL, json=payload, timeout=5)
-            if response.status_code == 200:
-                result = response.json()
-                result['source'] = "⚡ AWS Lambda" 
-                return result
-            else:
-                return CostCalculator.calculate_tco(car_row, inputs, resale_model_local)
-        except Exception:
-            return CostCalculator.calculate_tco(car_row, inputs, resale_model_local)
-    else:
-        # Local Mode
-        return CostCalculator.calculate_tco(car_row, inputs, resale_model_local)
-
-# --- LOAD DATA & MODELS ---
+# --- LOAD DATA (For UI Lists Only) ---
 df_full = get_cached_data()
-
-if df_full.empty:
-    st.warning("⚠️ Database not found. Please run `init_db.py`.")
-    st.stop()
-
-# Initialize ML Models
-recommender_global = CarRecommender(df_full)
-resale_model_global = ResaleModel(df_full) 
 
 # Title and Intro
 st.title("🚗 Perfect Car Picker")
+
+# --- DIAGNOSTIC BANNER ---
+if len(df_full) > 10:
+    st.success(f"✅ **Live Database Connected!** Loaded {len(df_full)} vehicles from API.")
+else:
+    st.error(f"🔌 **Live Database Connection Failed!** Displaying {len(df_full)} offline fallback vehicles.")
+    st.info("Check backend logs or ensure the database has been seeded with `init_db.py`.")
+
 st.markdown("""
 **AI-Powered Vehicle Analysis & Financial Modeling**
 Answer a few questions about your lifestyle, and our AI will calculate the **True Cost of Ownership** (including depreciation, fuel, and maintenance) to find your perfect match.
@@ -103,14 +87,13 @@ with st.sidebar.expander("🏦 Buying Strategy (Global)", expanded=False):
 st.sidebar.divider()
 st.sidebar.header("🛠️ System")
 if st.sidebar.button("🔄 Refresh Database Cache", help="Clears local cache and forces the backend to fetch fresh database records."):
-    if API_URL:
-        with st.spinner("Refreshing backend database..."):
-            try:
-                requests.post(API_URL, json={"action": "refresh"}, timeout=15)
-                st.sidebar.success("Backend refreshed!")
-            except Exception as e:
-                st.sidebar.error("Failed to reach backend API.")
+    with st.spinner("Refreshing backend database cache..."):
+        if api_client.refresh_database():
+            st.sidebar.success("Backend refreshed!")
+        else:
+            st.sidebar.error("Failed to reach backend API.")
     
+    # Clear the Streamlit cache so load_data fetches the newly refreshed API data
     st.cache_data.clear()
     st.rerun()
 
@@ -175,7 +158,6 @@ with tab1:
             st.markdown("### 6. Capability & Tech")
             c1, c2 = st.columns(2)
             with c1:
-                # NEW SEAT COUNT SLIDER
                 seats_needs = st.select_slider("Passenger Capacity", options=[2, 4, 5, 6, 7, 8], value=5)
             with c2:
                 terrain_choice = st.select_slider("Off-Road", options=["City/Paved", "Bumpy/Gravel", "Off-Road"], value="City/Paved")
@@ -193,49 +175,54 @@ with tab1:
 
         submitted = st.form_submit_button("🔍 Analyze & Find Matches")
 
+    # --- PROCESS SUBMISSION (API Calls) ---
     if submitted:
-        st.divider()
-        st.subheader("Recommended for You")
-        
         if not fuel_choices:
             st.error("Please select at least one Fuel Type.")
+            st.session_state.search_results = None
         else:
-            df_filtered = df_full[df_full['fuel_type'].isin(fuel_choices)].copy()
-            
-            if df_filtered.empty:
-                st.warning(f"No cars found matching fuel types: {', '.join(fuel_choices)}")
-            else:
-                recommender_local = CarRecommender(df_filtered)
-                
-                if "Electric" in fuel_choices: target_mpg = 110
-                elif "Hybrid" in fuel_choices: target_mpg = 50
-                else: target_mpg = 25
+            # 1. MAP PREFERENCES
+            if "Electric" in fuel_choices: target_mpg = 110
+            elif "Hybrid" in fuel_choices: target_mpg = 50
+            else: target_mpg = 25
 
-                target_legroom = 40.0 if pax_needs == "Spacious" else 36.0
-                target_accel = 4.5 if perf_needs == "Fast" else 7.5
-                target_assist = 9.0 if "Advanced" in assist_needs else 6.0
+            target_legroom = 40.0 if pax_needs == "Spacious" else 36.0
+            target_accel = 4.5 if perf_needs == "Fast" else 7.5
+            target_assist = 9.0 if "Advanced" in assist_needs else 6.0
+            
+            target_price_final = calc_budget
+            target_cargo_final = 30.0
+            
+            if priority == "Lowest Total Cost": target_price_final = calc_budget * 0.9 
+            elif priority == "Performance (Speed)": target_accel = max(3.0, target_accel - 1.5)
+            elif priority == "Utility (Cargo)": target_cargo_final = 50.0 
+            elif priority == "Tech & Safety": target_assist = 9.5
                 
-                target_price_final = calc_budget
-                target_cargo_final = 30.0
+            user_prefs = {
+                'price': target_price_final, 'class': target_class, 
+                'fuel_type': 'Any', 
+                'city_mpg': target_mpg, 'reliability_score': 8.0, 'luxury_score': target_luxury,
+                'rear_legroom': target_legroom, 'acceleration': target_accel,
+                'cargo_space': target_cargo_final, 'driver_assist_score': target_assist,
+                'offroad_capability': target_offroad,
+                'seats': seats_needs
+            }
+            
+            # 2. CALL API (RECOMMEND)
+            with st.spinner("Finding matches via AWS Lambda..."):
+                recs_df = api_client.get_recommendations(user_prefs)
+
+            if recs_df.empty:
+                st.warning("No matches found from API.")
+                st.session_state.search_results = None
+            else:
+                # Filter results by fuel type 
+                recs_df = recs_df[recs_df['fuel_type'].isin(fuel_choices)]
                 
-                if priority == "Lowest Total Cost": target_price_final = calc_budget * 0.9 
-                elif priority == "Performance (Speed)": target_accel = max(3.0, target_accel - 1.5)
-                elif priority == "Utility (Cargo)": target_cargo_final = 50.0 
-                elif priority == "Tech & Safety": target_assist = 9.5
-                    
-                user_prefs = {
-                    'price': target_price_final, 'class': target_class, 
-                    'fuel_type': 'Any', 
-                    'city_mpg': target_mpg, 'reliability_score': 8.0, 'luxury_score': target_luxury,
-                    'rear_legroom': target_legroom, 'acceleration': target_accel,
-                    'cargo_space': target_cargo_final, 'driver_assist_score': target_assist,
-                    'offroad_capability': target_offroad,
-                    'seats': seats_needs # Added to prefs
-                }
-                
-                try:
-                    recs = recommender_local.recommend(user_prefs)
-                    
+                if recs_df.empty:
+                    st.warning(f"Matches found, but none matched your Fuel selection: {', '.join(fuel_choices)}")
+                    st.session_state.search_results = None
+                else:
                     tco_inputs = {
                         'years': years_ownership, 
                         'gas_price': gas_price, 
@@ -249,19 +236,23 @@ with tab1:
                     }
                     
                     results = []
-                    for idx, row in recs.iterrows():
-                        costs = get_tco_result(row, tco_inputs, resale_model_local=resale_model_global)
-                        car_data = row.to_dict()
-                        car_data.update(costs)
-                        car_data['Monthly Cash Flow'] += total_subs
-                        car_data['Monthly True Cost'] += total_subs
+                    for idx, row in recs_df.iterrows():
+                        # 3. CALL API (CALCULATE)
+                        costs = api_client.calculate_tco(row, tco_inputs)
                         
-                        car_features = [f.strip() for f in car_data['features'].split(',')]
+                        car_data = row.to_dict()
+                        if costs:
+                            car_data.update(costs)
+                            car_data['Monthly Cash Flow'] += total_subs
+                            car_data['Monthly True Cost'] += total_subs
+                        
+                        car_features = [f.strip() for f in car_data.get('features', '').split(',')]
                         matches = [f for f in desired_features if any(f.lower() in feat.lower() for feat in car_features)]
                         car_data['match_count'] = len(matches)
                         car_data['matched_features'] = ", ".join(matches)
                         results.append(car_data)
                     
+                    # Sort
                     sort_cols = ["match_count", "Monthly True Cost"]
                     sort_asc = [False, True]
                     
@@ -270,46 +261,63 @@ with tab1:
                         sort_asc = [False, True, True] 
                     elif priority == "Utility (Cargo)":
                         sort_cols = ["match_count", "cargo_space", "Monthly True Cost"]
-                        sort_asc = [False, False, True]
+                        sort_asc = [False, False, True] 
                     elif priority == "Tech & Safety":
                         sort_cols = ["match_count", "driver_assist_score", "Monthly True Cost"]
                         sort_asc = [False, False, True] 
                     
                     results_df = pd.DataFrame(results).sort_values(by=sort_cols, ascending=sort_asc)
                     
-                    st.download_button(
-                        label="📥 Download Results as CSV",
-                        data=results_df.to_csv(index=False).encode('utf-8'),
-                        file_name='autoinvest_recommendations.csv',
-                        mime='text/csv',
-                    )
+                    # SAVE TO SESSION STATE
+                    st.session_state.search_results = results_df
+                    st.session_state.pitch_map = {}
                     
-                    for idx, row in results_df.iterrows():
-                        cost_label = "Monthly Pmt" if global_method != 'Cash' else "Monthly TCO"
-                        cost_val = row['Monthly Payment'] if global_method != 'Cash' else row['Monthly True Cost']
+                    # --- AUTO-FETCH PITCH FOR TOP RESULT VIA API ---
+                    if not results_df.empty:
+                        top_car = results_df.iloc[0]
+                        top_idx = results_df.index[0]
                         
-                        with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=True):
-                            c1, c2, c3, c4 = st.columns(4)
-                            c1.metric("Price", f"${row['price']:,.0f}")
-                            c2.metric("Monthly Flow", f"${row['Monthly Cash Flow']:.0f}", help="Pmt + Fuel + Ins + Maint + Subs")
-                            c3.metric("Real-World MPG", f"{row['Est MPG']}", help="Weighted by driving habits & climate")
-                            c4.metric("Seats", f"{row['seats']}") # Display Seats
-                            
-                            if 'source' in row and 'AWS' in row['source']:
-                                st.caption(f"⚡ Calculated via {row['source']}")
+                        with st.spinner(f"Auto-analyzing top match: {top_car['model']}..."):
+                            pitch = api_client.get_ai_pitch(top_car, priority)
+                            st.session_state.pitch_map[top_idx] = pitch
 
-                            # AI PITCH BUTTON
-                            if st.button(f"🤖 Why buy this {row['model']}?", key=f"ai_{idx}"):
-                                with st.spinner("Consulting AI Advisor (Bedrock)..."):
-                                    pitch = AIAdvisor.get_car_pitch(row, priority)
-                                    st.info(pitch)
+    # --- RENDER RESULTS (Persistent) ---
+    if st.session_state.search_results is not None:
+        st.divider()
+        st.subheader("Recommended for You")
+        
+        results_df = st.session_state.search_results
+        
+        st.download_button("📥 Download Results as CSV", results_df.to_csv(index=False).encode('utf-8'), 'recs.csv', 'text/csv')
+        
+        for idx, row in results_df.iterrows():
+            cost_label = "Monthly Pmt" if global_method != 'Cash' else "Monthly TCO"
+            cost_val = row.get('Monthly Payment', 0) if global_method != 'Cash' else row.get('Monthly True Cost', 0)
+            
+            expanded_state = True
+            
+            with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=expanded_state):
+                if idx in st.session_state.pitch_map:
+                    st.info(f"🤖 **AI Analysis:** {st.session_state.pitch_map[idx]}")
 
-                            if st.button(f"💰 Deep Dive Analysis", key=f"btn_{idx}"):
-                                st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
-                                st.success(f"Car selected! Go to the 'Deal Analyzer' tab.")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Price", f"${row.get('price',0):,.0f}")
+                c2.metric("Monthly Flow", f"${row.get('Monthly Cash Flow',0):.0f}", help="Pmt + Fuel + Ins + Maint + Subs")
+                c3.metric("MPG/MPGe", f"{row.get('Est MPG', row.get('city_mpg'))}", help="Weighted by driving habits & climate")
+                c4.metric("Seats", f"{row.get('seats', 5)}") 
+                
+                if 'source' in row: st.caption(f"⚡ {row['source']}")
 
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
+                if idx not in st.session_state.pitch_map:
+                    if st.button(f"🤖 Why buy this?", key=f"ai_{idx}"):
+                        with st.spinner("Asking AI via API..."):
+                            pitch = api_client.get_ai_pitch(row, priority)
+                            st.session_state.pitch_map[idx] = pitch
+                            st.rerun() 
+
+                if st.button(f"💰 Deep Dive Analysis", key=f"btn_{idx}"):
+                    st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
+                    st.success("Sent to Deal Analyzer!")
 
 # === TAB 2: COMPARE ===
 with tab2:
@@ -324,7 +332,7 @@ with tab2:
         custom_deals = []
         if 'comparison_list' in st.session_state:
             for i, deal in enumerate(st.session_state.comparison_list):
-                deal_name = f"DEAL: {deal['make']} {deal['model']} - ${deal.get('price', 0):,.0f}"
+                deal_name = f"DEAL: {deal.get('make')} {deal.get('model')} - ${deal.get('price', 0):,.0f}"
                 deal['display_name'] = deal_name
                 custom_deals.append(deal)
         
@@ -332,11 +340,10 @@ with tab2:
         deal_options = [d['display_name'] for d in custom_deals]
         all_options = deal_options + std_options 
         
-        compare_selection = st.multiselect("Select Vehicles to Compare (Max 4)", all_options, max_selections=4)
+        compare_selection = st.multiselect("Select Vehicles to Compare", all_options, max_selections=4)
         
         if compare_selection:
             rows_to_display = []
-            
             for sel in compare_selection:
                 if sel in deal_options:
                     found_deal = next(d for d in custom_deals if d['display_name'] == sel)
@@ -347,8 +354,8 @@ with tab2:
             
             comp_df = pd.DataFrame(rows_to_display)
             
-            st.markdown("### Vehicle Specifications")
-            base_cols = ['make', 'model', 'price', 'city_mpg', 'hwy_mpg', 'acceleration', 'cargo_space', 'rear_legroom', 'seats', 'reliability_score']
+            st.markdown("### Specifications")
+            base_cols = ['make', 'model', 'price', 'city_mpg', 'acceleration', 'seats', 'reliability_score']
             tco_cols = ['Monthly Payment', 'Monthly True Cost', 'Resale Value']
             present_cols = [c for c in tco_cols if c in comp_df.columns]
             final_cols = ['display_name'] + base_cols + present_cols
@@ -356,14 +363,11 @@ with tab2:
             comp_display = comp_df[final_cols].set_index('display_name').transpose()
             st.dataframe(comp_display.astype(str))
             
-            st.markdown("### Interactive Performance Chart")
+            st.markdown("### Performance Chart")
             fig = px.scatter(comp_df, x='price', y='acceleration', color='make', size='city_mpg', hover_data=['model'], title="Price vs Speed (Size = MPG)")
             st.plotly_chart(fig, use_container_width=True)
-                
-        else:
-            st.info("Select vehicles above to see a side-by-side comparison.")
-    
-# === TAB 4: DEAL ANALYZER (NEW) ===
+
+# === TAB 4: DEAL ANALYZER ===
 with tab4:
     st.header("💰 Detailed Cost & Deal Analyzer")
     
@@ -434,91 +438,96 @@ with tab4:
                 
                 user_fin_inputs['years'] = l_term / 12
 
-        costs = get_tco_result(car_row_calc, user_fin_inputs, resale_model_local=resale_model_global)
+        # CALL API FOR CALCULATION
+        costs = api_client.calculate_tco(car_row_calc, user_fin_inputs)
         
-        costs['Monthly Cash Flow'] += total_subs
-        costs['Monthly True Cost'] += total_subs
+        if costs:
+            costs['Monthly Cash Flow'] += total_subs
+            costs['Monthly True Cost'] += total_subs
         
         with col_fin2:
             st.subheader("2. Cost Breakdown")
             
-            total_label = "Total Period"
-            if deal_method == "Lease":
-                term = int(user_fin_inputs.get('lease_term', 36))
-                total_label = f"Total ({term} Mos)"
+            if not costs:
+                st.error("Calculation failed via API")
             else:
-                total_label = f"Total ({analysis_years} Yrs)"
-                
-            view_mode = st.radio("Timeframe", ["Monthly", "Yearly", total_label], horizontal=True)
-            show_dep = st.checkbox("Include Depreciation in Total?", value=False)
-            
-            if view_mode == "Yearly":
-                mult = 12
-            elif view_mode == total_label:
+                total_label = "Total Period"
                 if deal_method == "Lease":
-                    mult = user_fin_inputs.get('lease_term', 36)
+                    term = int(user_fin_inputs.get('lease_term', 36))
+                    total_label = f"Total ({term} Mos)"
                 else:
-                    mult = analysis_years * 12
-            else:
-                mult = 1
+                    total_label = f"Total ({analysis_years} Yrs)"
+                    
+                view_mode = st.radio("Timeframe", ["Monthly", "Yearly", total_label], horizontal=True)
+                show_dep = st.checkbox("Include Depreciation in Total?", value=False)
                 
-            m1, m2, m3 = st.columns(3)
-            
-            if show_dep:
-                display_cost = costs['Monthly True Cost'] * mult
-                subtext = "Includes Dep/Equity Loss"
-            else:
-                base_flow = costs['Monthly Cash Flow'] * mult
-                if view_mode == total_label:
-                    display_cost = base_flow + costs['Upfront Cost']
-                    subtext = "Cash Flow + Upfront"
+                if view_mode == "Yearly":
+                    mult = 12
+                elif view_mode == total_label:
+                    if deal_method == "Lease":
+                        mult = user_fin_inputs.get('lease_term', 36)
+                    else:
+                        mult = analysis_years * 12
                 else:
-                    display_cost = base_flow
-                    subtext = "Running Cash Flow"
-            
-            m1.metric(f"Cost ({view_mode})", f"${display_cost:,.2f}", delta=subtext)
-            m2.metric("Payment Portion", f"${costs['Monthly Payment'] * mult:,.2f}")
-            m3.metric("Running Costs", f"${(costs['Monthly Fuel'] + costs['Monthly Ins'] + costs['Monthly Maint']) * mult:,.2f}")
-            
-            st.divider()
-            
-            if st.button("➕ Add this Configured Deal to Comparison", type="primary"):
-                deal_snapshot = car_row_calc.to_dict()
-                deal_snapshot.update(costs)
-                deal_snapshot['is_deal'] = True
-                st.session_state.comparison_list.append(deal_snapshot)
-                st.success(f"Added {deal_snapshot['make']} {deal_snapshot['model']} deal to Compare tab!")
-            
-            st.divider()
-            m4, m5, m6 = st.columns(3)
-            
-            if deal_method != "Lease":
-                m4.metric(f"Value after {analysis_years} yrs", f"${costs['Resale Value']:,.0f}", delta="Est. Resale Price")
-            else:
-                m4.metric("Residual Value", "N/A (Lease)", delta="Return to Dealer")
+                    mult = 1
+                    
+                m1, m2, m3 = st.columns(3)
                 
-            avg_yearly = costs['Monthly True Cost'] * 12
-            m5.metric("Avg Cost / Year", f"${avg_yearly:,.0f}", help="Total True Cost / Years")
-            
-            st.divider()
-            
-            val_pay = costs['Monthly Payment'] * mult
-            val_fuel = costs['Monthly Fuel'] * mult
-            val_ins = costs['Monthly Ins'] * mult
-            val_maint = costs['Monthly Maint'] * mult
-            val_dep = costs['Monthly Dep'] * mult
-            val_subs = total_subs * mult
-            
-            breakdown_data = {
-                "Cost Component": ["Vehicle Payment", "Fuel / Charging", "Insurance", "Maintenance", "Subscriptions", "Depreciation (Hidden)"],
-                f"Cost ({view_mode})": [val_pay, val_fuel, val_ins, val_maint, val_subs, val_dep]
-            }
-            
-            if view_mode == total_label and costs['Upfront Cost'] > 0:
-                breakdown_data["Cost Component"].append("Upfront Due")
-                breakdown_data[f"Cost ({view_mode})"].append(costs['Upfront Cost'])
+                if show_dep:
+                    display_cost = costs.get('Monthly True Cost', 0) * mult
+                    subtext = "Includes Dep/Equity Loss"
+                else:
+                    base_flow = costs.get('Monthly Cash Flow', 0) * mult
+                    if view_mode == total_label:
+                        display_cost = base_flow + costs.get('Upfront Cost', 0)
+                        subtext = "Cash Flow + Upfront"
+                    else:
+                        display_cost = base_flow
+                        subtext = "Running Cash Flow"
+                
+                m1.metric(f"Cost ({view_mode})", f"${display_cost:,.2f}", delta=subtext)
+                m2.metric("Payment Portion", f"${costs.get('Monthly Payment', 0) * mult:,.2f}")
+                m3.metric("Running Costs", f"${(costs.get('Monthly Fuel', 0) + costs.get('Monthly Ins', 0) + costs.get('Monthly Maint', 0)) * mult:,.2f}")
+                
+                st.divider()
+                
+                if st.button("➕ Add this Configured Deal to Comparison", type="primary"):
+                    deal_snapshot = car_row_calc.to_dict()
+                    deal_snapshot.update(costs)
+                    deal_snapshot['is_deal'] = True
+                    st.session_state.comparison_list.append(deal_snapshot)
+                    st.success(f"Added {deal_snapshot['make']} {deal_snapshot['model']} deal to Compare tab!")
+                
+                st.divider()
+                m4, m5, m6 = st.columns(3)
+                
+                if deal_method != "Lease":
+                    m4.metric(f"Value after {analysis_years} yrs", f"${costs.get('Resale Value', 0):,.0f}", delta="Est. Resale Price")
+                else:
+                    m4.metric("Residual Value", "N/A (Lease)", delta="Return to Dealer")
+                    
+                avg_yearly = costs.get('Monthly True Cost', 0) * 12
+                m5.metric("Avg Cost / Year", f"${avg_yearly:,.0f}", help="Total True Cost / Years")
+                
+                st.divider()
+                
+                val_pay = costs.get('Monthly Payment', 0) * mult
+                val_fuel = costs.get('Monthly Fuel', 0) * mult
+                val_ins = costs.get('Monthly Ins', 0) * mult
+                val_maint = costs.get('Monthly Maint', 0) * mult
+                val_dep = costs.get('Monthly Dep', 0) * mult
+                val_subs = total_subs * mult
+                
+                breakdown_data = {
+                    "Cost Component": ["Vehicle Payment", "Fuel / Charging", "Insurance", "Maintenance", "Subscriptions", "Depreciation (Hidden)"],
+                    f"Cost ({view_mode})": [val_pay, val_fuel, val_ins, val_maint, val_subs, val_dep]
+                }
+                
+                if view_mode == total_label and costs.get('Upfront Cost', 0) > 0:
+                    breakdown_data["Cost Component"].append("Upfront Due")
+                    breakdown_data[f"Cost ({view_mode})"].append(costs.get('Upfront Cost', 0))
 
-            bd_df = pd.DataFrame(breakdown_data)
-            
-            st.dataframe(bd_df.style.format({f"Cost ({view_mode})": "${:,.2f}"}))
-            st.bar_chart(bd_df.set_index("Cost Component"))
+                bd_df = pd.DataFrame(breakdown_data)
+                
+                st.dataframe(bd_df.style.format({f"Cost ({view_mode})": "${:,.2f}"}))
+                st.bar_chart(bd_df.set_index("Cost Component"))

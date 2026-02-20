@@ -1,11 +1,8 @@
 import pandas as pd
-import numpy as np
-import os
 import requests
 import json
-import sqlalchemy
-import time
 
+# --- 1. DATA LOADING (For UI Dropdowns) ---
 def load_data(api_url):
     """
     Loads basic vehicle data to populate UI lists (Make, Model, etc.).
@@ -31,6 +28,7 @@ def load_data(api_url):
     ]
     return pd.DataFrame(fallback_data)
 
+# --- 2. API CLIENT (Thin Client Logic) ---
 class APIClient:
     """
     Handles all communication with the Backend Lambda.
@@ -38,6 +36,18 @@ class APIClient:
     """
     def __init__(self, api_url):
         self.api_url = api_url
+
+    def refresh_database(self):
+        """Call Lambda to force a refresh of its internal database cache"""
+        if not self.api_url: return False
+        
+        try:
+            payload = {"action": "refresh"}
+            response = requests.post(self.api_url, json=payload, timeout=15)
+            return response.status_code == 200
+        except Exception as e:
+            print(f"API Error (Refresh): {e}")
+            return False
 
     def get_all_cars(self):
         """Call Lambda to get the full database of cars"""
