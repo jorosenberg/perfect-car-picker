@@ -2,22 +2,16 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-import requests
-import json
 from logic import load_data, APIClient
 
-# Page Config
 st.set_page_config(page_title="Perfect Car Picker", layout="wide")
 
-# --- CONFIGURATION ---
-API_URL = os.getenv("API_URL") # Injected by Terraform
+API_URL = os.getenv("API_URL")
 if not API_URL:
     st.error("⚠️ API_URL environment variable is missing. The app cannot connect to the backend.")
 
-# Initialize Client
 api_client = APIClient(API_URL)
 
-# --- INITIALIZE SESSION STATE ---
 if 'deal_car' not in st.session_state:
     st.session_state.deal_car = None
 if 'comparison_list' not in st.session_state:
@@ -27,22 +21,19 @@ if 'search_results' not in st.session_state:
 if 'pitch_map' not in st.session_state:
     st.session_state.pitch_map = {}
 
-# Removed ttl=300. It now caches permanently per session unless manually refreshed.
 @st.cache_data(show_spinner="⏳ Loading vehicles from Backend API...")
 def get_cached_data():
     return load_data(API_URL)
 
-# --- LOAD DATA (For UI Lists Only) ---
 df_full = get_cached_data()
 
 # Title and Intro
 st.title("🚗 Perfect Car Picker")
 
-# DIAGNOSTIC BANNER
 if len(df_full) > 10:
     st.success(f"✅ **Live Database Connected!** Loaded {len(df_full)} vehicles from API.")
 else:
-    st.error(f"🔌 **Live Database Connection Failed!** Displaying {len(df_full)} offline fallback vehicles. Please use Force Data Refresh button if first time starting app.")
+    st.error(f"🔌 **Live Database Connection Failed!** Displaying {len(df_full)} offline fallback vehicles. Please reload database if first time app startup.")
     st.info("Click **'Force Data Refresh'** in the sidebar below to try reconnecting to the database.")
 
 st.markdown("""
@@ -50,7 +41,6 @@ st.markdown("""
 Answer a few questions about your lifestyle, and our AI will calculate the **True Cost of Ownership** (including depreciation, fuel, and maintenance) to find your perfect match.
 """)
 
-# --- SIDEBAR: GLOBAL SETTINGS ---
 st.sidebar.header("🌍 Market & Finance")
 
 with st.sidebar.expander("⛽ Energy Prices", expanded=True):
@@ -58,13 +48,11 @@ with st.sidebar.expander("⛽ Energy Prices", expanded=True):
     elec_price = st.number_input("Home Electricity ($/kWh)", value=0.16, step=0.01)
     elec_price_fast = st.number_input("Fast Charging ($/kWh)", value=0.36, step=0.01, help="Cost for DC Fast Charging on road trips")
 
-# --- SUBSCRIPTIONS ---
 with st.sidebar.expander("💳 Monthly Subscriptions", expanded=True):
     charge_sub = st.number_input("Charging Network ($/mo)", value=0, help="e.g., Electrify America Pass+, Tesla Supercharger Membership")
     feature_sub = st.number_input("Vehicle Features ($/mo)", value=0, help="e.g., Tesla Autopilot/FSD, Hyundai BlueLink, GM OnStar")
     total_subs = charge_sub + feature_sub
 
-# --- DRIVER PROFILE ---
 with st.sidebar.expander("👤 Driver Profile", expanded=False):
     years_licensed = st.number_input("Years since getting license", 0, 80, 14, help="We use this to estimate insurance risk scaling.")
     driver_age_est = 16 + years_licensed
@@ -84,17 +72,14 @@ with st.sidebar.expander("🏦 Buying Strategy (Global)", expanded=False):
     elif global_method == "Lease":
         st.info("Lease estimates are generic (1.2% of MSRP) in the main list. Use the 'Deal Analyzer' tab for specific quotes.")
 
-# --- SIDEBAR: SYSTEM SETTINGS ---
 st.sidebar.divider()
 st.sidebar.header("🛠️ System")
 if st.sidebar.button("🔄 Force Data Refresh", help="Clears the cached fallback data and forces a fresh connection to the database."):
     st.cache_data.clear()
     st.rerun()
 
-# --- TABBED INTERFACE ---
 tab1, tab2, tab4 = st.tabs(["💡 Help Me Choose", "📊 Compare Cars", "💰 Deal Analyzer"])
 
-# === TAB 1: QUESTIONNAIRE & AI RECOMMENDATION ===
 with tab1:
     st.subheader("Let's find your ideal car")
     
@@ -174,11 +159,23 @@ with tab1:
 
         submitted = st.form_submit_button("🔍 Analyze & Find Matches")
 
-    # --- CALCULATION LOGIC (Only runs on Submit) ---
     if submitted:
         if not fuel_choices:
             st.error("Please select at least one Fuel Type.")
         else:
+            # 1. MAP PREFERENCES (Restored missing variables)
+            if "Electric" in fuel_choices: target_mpg = 110
+            elif "Hybrid" in fuel_choices: target_mpg = 50
+            else: target_mpg = 25
+
+            target_legroom = 40.0 if pax_needs == "Spacious" else 36.0
+            target_accel = 4.5 if perf_needs == "Fast" else 7.5
+            target_assist = 9.0 if "Advanced" in assist_needs else 6.0
+            
+            target_price_final = calc_budget
+            target_cargo_final = 30.0
+
+            # Apply priority adjustments
             if priority == "Lowest Total Cost": target_price_final = calc_budget * 0.9 
             elif priority == "Performance (Speed)": target_accel = max(3.0, target_accel - 1.5)
             elif priority == "Utility (Cargo)": target_cargo_final = 50.0 
@@ -195,7 +192,6 @@ with tab1:
                 'seats': seats_needs
             }
             
-            # 2. CALL API (RECOMMEND)
             with st.spinner("Finding matches via AWS Lambda..."):
                 recs_df = api_client.get_recommendations(user_prefs)
 
@@ -203,8 +199,11 @@ with tab1:
                 st.warning("No matches found from API.")
                 st.session_state.search_results = None
             else:
+                recs_df = recs_df[recs_df['fuel_type'].isin(fuel_choices)]
+                
+                recs_df = recs_df[recs_df['price'] <= calc_budget]
+                
                 if desired_features:
-                    # Maps UI options to various ways manufacturers name them
                     feature_aliases = {
                         "Apple CarPlay": ["carplay", "apple carplay", "apple"],
                         "Android Auto": ["android auto", "android"],
@@ -236,7 +235,6 @@ with tab1:
                     st.warning("Matches found, but none met your strict Price, Fuel Type, and Must-Haves requirements. Try relaxing your filters or increasing your budget.")
                     st.session_state.search_results = None
                 else:
-                    # Take top 5 after filters (Nearest Neighbors already sorted them by match quality)
                     recs_df = recs_df.head(5)
                     
                     tco_inputs = {
@@ -253,7 +251,6 @@ with tab1:
                     
                     results = []
                     for idx, row in recs_df.iterrows():
-                        # 3. CALL API (CALCULATE)
                         costs = api_client.calculate_tco(row, tco_inputs)
                         
                         car_data = row.to_dict()
@@ -262,7 +259,6 @@ with tab1:
                             car_data['Monthly Cash Flow'] += total_subs
                             car_data['Monthly True Cost'] += total_subs
                         
-                        car_data['matched_features'] = ", ".join(desired_features) if desired_features else "None specified"
                         results.append(car_data)
                     
                     # Sort
@@ -281,20 +277,18 @@ with tab1:
                     
                     results_df = pd.DataFrame(results).sort_values(by=sort_cols, ascending=sort_asc)
                     
-                    # SAVE TO SESSION STATE
                     st.session_state.search_results = results_df
                     st.session_state.pitch_map = {}
                     
-                    # --- AUTO-FETCH PITCH FOR TOP RESULT ---
                     if not results_df.empty:
                         top_car = results_df.iloc[0]
                         top_idx = results_df.index[0]
                         
                         with st.spinner(f"Auto-analyzing top match: {top_car['model']}..."):
-                            pitch = api_client.get_ai_pitch(top_car, priority)
+                            ai_instruction = f"{priority}. Please also include a response based on the 'Pros' of the vehicle from its reviews, and explicitly list out the vehicle's notable features."
+                            pitch = api_client.get_ai_pitch(top_car, ai_instruction)
                             st.session_state.pitch_map[top_idx] = pitch
 
-    # --- RENDER RESULTS (Persistent) ---
     if st.session_state.search_results is not None:
         st.divider()
         st.subheader("Recommended for You")
@@ -310,6 +304,11 @@ with tab1:
             expanded_state = True
             
             with st.expander(f"{row['year']} {row['make']} {row['model']} | {cost_label}: ${cost_val:.0f}", expanded=expanded_state):
+                
+                st.caption(f"✨ **Features:** {row.get('features', 'Standard')}")
+                if 'review_summary' in row:
+                    st.caption(f"📝 **Review:** {row['review_summary']}")
+                    
                 if idx in st.session_state.pitch_map:
                     st.info(f"🤖 **AI Analysis:** {st.session_state.pitch_map[idx]}")
 
@@ -324,7 +323,8 @@ with tab1:
                 if idx not in st.session_state.pitch_map:
                     if st.button(f"🤖 Why buy this?", key=f"ai_{idx}"):
                         with st.spinner("Asking AI..."):
-                            pitch = api_client.get_ai_pitch(row, priority)
+                            ai_instruction = f"{priority}. Please also include a response based on the 'Pros' of the vehicle from its reviews, and explicitly list out the vehicle's notable features."
+                            pitch = api_client.get_ai_pitch(row, ai_instruction)
                             st.session_state.pitch_map[idx] = pitch
                             st.rerun() 
 
@@ -332,7 +332,6 @@ with tab1:
                     st.session_state.deal_car = f"{row['make']} {row['model']} ({row['year']})"
                     st.success("Sent to Deal Analyzer!")
 
-# === TAB 2: COMPARE ===
 with tab2:
     st.subheader("Head-to-Head Spec Comparison")
     
@@ -380,7 +379,6 @@ with tab2:
             fig = px.scatter(comp_df, x='price', y='acceleration', color='make', size='city_mpg', hover_data=['model'])
             st.plotly_chart(fig, use_container_width=True)
 
-# === TAB 4: DEAL ANALYZER ===
 with tab4:
     st.header("💰 Deal Analyzer")
     
@@ -427,12 +425,10 @@ with tab4:
                 user_inputs['lease_term'] = st.number_input("Lease Term (Months)", value=36, step=12)
                 user_inputs['years'] = user_inputs['lease_term'] / 12
 
-        # CALL API FOR CALCULATION
         car_row_calc = car_row.copy()
         car_row_calc['price'] = price_input
         costs = api_client.calculate_tco(car_row_calc, user_inputs)
         
-        # Add Subs
         if costs:
             costs['Monthly Cash Flow'] += total_subs
             costs['Monthly True Cost'] += total_subs
