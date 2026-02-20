@@ -163,7 +163,6 @@ with tab1:
         if not fuel_choices:
             st.error("Please select at least one Fuel Type.")
         else:
-            # 1. MAP PREFERENCES (Restored missing variables)
             if "Electric" in fuel_choices: target_mpg = 110
             elif "Hybrid" in fuel_choices: target_mpg = 50
             else: target_mpg = 25
@@ -175,7 +174,6 @@ with tab1:
             target_price_final = calc_budget
             target_cargo_final = 30.0
 
-            # Apply priority adjustments
             if priority == "Lowest Total Cost": target_price_final = calc_budget * 0.9 
             elif priority == "Performance (Speed)": target_accel = max(3.0, target_accel - 1.5)
             elif priority == "Utility (Cargo)": target_cargo_final = 50.0 
@@ -203,7 +201,6 @@ with tab1:
                 
                 recs_df = recs_df[recs_df['price'] <= calc_budget]
                 
-                # STRICT FILTER BY PRIMARY USE (Class)
                 if target_class != "Any":
                     recs_df = recs_df[recs_df['class'] == target_class]
                 
@@ -265,7 +262,6 @@ with tab1:
                         
                         results.append(car_data)
                     
-                    # Sort
                     sort_cols = ["Monthly True Cost"]
                     sort_asc = [True]
                     
@@ -384,10 +380,6 @@ with tab2:
             comp_display = formatted_base_df.set_index('display_name').transpose()
             st.dataframe(comp_display.astype(str))
             
-            st.markdown("### Performance Chart")
-            fig = px.scatter(comp_df, x='price', y='acceleration', color='make', size='city_mpg', hover_data=['model'])
-            st.plotly_chart(fig, use_container_width=True)
-            
             st.divider()
             st.markdown("### 🧮 Total Cost of Ownership (TCO)")
             st.info("Calculate depreciation, fuel, insurance, and maintenance costs over 1, 3, and 5 years based on your global settings.")
@@ -440,8 +432,15 @@ with tab2:
                         formatted_tco_df[c] = formatted_tco_df[c].apply(lambda x: f"${x:,.0f}" if pd.notnull(x) and isinstance(x, (int, float)) else x)
                     
                     tco_display = formatted_tco_df.set_index('display_name').transpose()
-                    st.markdown("#### TCO Results")
-                    st.dataframe(tco_display.astype(str))
+                
+                # Render results outside of the spinner so it waits perfectly
+                st.markdown("#### TCO Results")
+                st.dataframe(tco_display.astype(str))
+
+            st.divider()
+            st.markdown("### Performance Chart")
+            fig = px.scatter(comp_df, x='price', y='acceleration', color='make', size='city_mpg', hover_data=['model'])
+            st.plotly_chart(fig, use_container_width=True)
 
 with tab4:
     st.header("💰 Deal Analyzer")
