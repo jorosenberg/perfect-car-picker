@@ -402,8 +402,14 @@ with tab2:
                         row_copy = sel_row.copy()
                         deal_inputs = row_copy.get('deal_inputs', global_tco_inputs)
                         
+                        # Fix: API Client expects a Pandas Series to cleanly perform .to_json()
+                        # Dictionaries instantly throw an exception resulting in $0 defaults!
+                        # We carefully remove 'deal_inputs' to ensure clean parsing to Series.
+                        clean_row_dict = {k: v for k, v in row_copy.items() if k not in ['deal_inputs', 'is_deal']}
+                        car_series = pd.Series(clean_row_dict)
+                        
                         # Base calculations
-                        base_costs = api_client.calculate_tco(row_copy, deal_inputs)
+                        base_costs = api_client.calculate_tco(car_series, deal_inputs)
                         if base_costs:
                             row_copy['Monthly Payment'] = base_costs.get('Monthly Payment', 0)
                             row_copy['Monthly True Cost'] = base_costs.get('Monthly True Cost', 0) + total_subs
@@ -413,7 +419,7 @@ with tab2:
                         for y in [1, 3, 5]:
                             temp_inputs = deal_inputs.copy()
                             temp_inputs['years'] = y
-                            costs = api_client.calculate_tco(row_copy, temp_inputs)
+                            costs = api_client.calculate_tco(car_series, temp_inputs)
                             if costs:
                                 row_copy[f'Total Cost ({y} yr)'] = (costs.get('Monthly True Cost', 0) + total_subs) * 12 * y
                             else:
