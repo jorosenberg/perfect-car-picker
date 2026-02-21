@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-from logic import load_data, APIClient
+from logic import load_data, APIClient, AppLogic
 
 st.set_page_config(page_title="Perfect Car Picker", layout="wide")
 
@@ -88,23 +88,18 @@ with tab1:
         
         with col_q1:
             st.markdown("### 1. Financials")
-            budget_type = st.radio("Budget Mode", ["Vehicle Price (Sticker)", "Monthly Total Budget (All-In)", "Yearly Total Budget (All-In)"], horizontal=False)
+            budget_type = st.radio("Budget Mode", ["Vehicle Budget (Sticker)", "Monthly Total Budget (All-In)", "Yearly Total Budget (All-In)"], horizontal=False)
             
-            if budget_type == "Vehicle Price (Sticker)":
-                target_budget = st.slider("Max Vehicle Price ($)", 15000, 150000, 40000, step=1000)
-                calc_budget = target_budget
+            if budget_type == "Vehicle Budget (Sticker)":
+                target_budget = st.slider("Budget ($)", 15000, 150000, 40000, step=1000)
+                calc_budget = AppLogic.calculate_budget(budget_type, target_budget=target_budget)
             elif budget_type == "Monthly Total Budget (All-In)":
                 monthly_cap = st.slider("Max Monthly Cost ($)", 300, 5000, 800, step=50, help="Includes Pmt, Ins, Fuel, Maint")
-                est_ops = 250
-                avail_pmt = max(0, monthly_cap - est_ops)
-                calc_budget = avail_pmt * 55 
+                calc_budget = AppLogic.calculate_budget(budget_type, monthly_cap=monthly_cap)
                 st.caption(f"👀 Estimating vehicles priced around **${calc_budget:,.0f}**")
             else: 
                 yearly_cap = st.slider("Max Yearly Cost ($)", 4000, 36000, 10000, step=500)
-                monthly_equiv = yearly_cap / 12
-                est_ops = 250
-                avail_pmt = max(0, monthly_equiv - est_ops)
-                calc_budget = avail_pmt * 55
+                calc_budget = AppLogic.calculate_budget(budget_type, yearly_cap=yearly_cap)
                 st.caption(f"👀 Estimating vehicles priced around **${calc_budget:,.0f}**")
             
             st.markdown("### 2. Primary Use")
@@ -163,32 +158,11 @@ with tab1:
         if not fuel_choices:
             st.error("Please select at least one Fuel Type.")
         else:
-            if "Electric" in fuel_choices: target_mpg = 110
-            elif "Hybrid" in fuel_choices: target_mpg = 50
-            else: target_mpg = 25
-
-            target_legroom = 40.0 if pax_needs == "Spacious" else 36.0
-            target_accel = 4.5 if perf_needs == "Fast" else 7.5
-            target_assist = 9.0 if "Advanced" in assist_needs else 6.0
-            
-            target_price_final = calc_budget
-            target_cargo_final = 30.0
-
-            if priority == "Lowest Total Cost": target_price_final = calc_budget * 0.9 
-            elif priority == "Performance (Speed)": target_accel = max(3.0, target_accel - 1.5)
-            elif priority == "Utility (Cargo)": target_cargo_final = 50.0 
-            elif priority == "Tech & Safety": target_assist = 9.5
-                
-            user_prefs = {
-                'price': target_price_final, 'class': target_class, 
-                'fuel_type': 'Any', 
-                'city_mpg': target_mpg, 'reliability_score': 8.0, 
-                'luxury_score': target_luxury, 'fun_score': target_fun,
-                'rear_legroom': target_legroom, 'acceleration': target_accel,
-                'cargo_space': target_cargo_final, 'driver_assist_score': target_assist,
-                'offroad_capability': target_offroad,
-                'seats': seats_needs
-            }
+            user_prefs = AppLogic.build_user_prefs(
+                fuel_choices, pax_needs, perf_needs, assist_needs, 
+                calc_budget, priority, target_class, target_luxury, 
+                target_fun, target_offroad, seats_needs
+            )
             
             with st.spinner("Finding matches via AWS Lambda..."):
                 recs_df = api_client.get_recommendations(user_prefs)
@@ -197,97 +171,37 @@ with tab1:
                 st.warning("No matches found from API.")
                 st.session_state.search_results = None
             else:
-                recs_df = recs_df[recs_df['fuel_type'].isin(fuel_choices)]
+                tco_inputs = {
+                    'years': years_ownership, 
+                    'gas_price': gas_price, 
+                    'elec_price': elec_price,
+                    'elec_price_road': elec_price_fast,
+                    'method': global_method, 'apr': global_apr, 'term': global_term, 'down_payment': global_down,
+                    'commute_dist': commute_dist, 'days_week': days_week, 'commute_type': commute_type,
+                    'road_trip_miles': road_trip_miles, 'other_miles': other_miles,
+                    'climate': env_climate, 'terrain': env_terrain,
+                    'driver_age': driver_age_est
+                }
                 
-                recs_df = recs_df[recs_df['price'] <= calc_budget]
+                results_df = AppLogic.filter_and_process_results(
+                    recs_df, fuel_choices, calc_budget, target_class, 
+                    desired_features, api_client, tco_inputs, total_subs, priority
+                )
                 
-                if target_class != "Any":
-                    recs_df = recs_df[recs_df['class'] == target_class]
-                
-                if desired_features:
-                    feature_aliases = {
-                        "Apple CarPlay": ["carplay", "apple carplay", "apple"],
-                        "Android Auto": ["android auto", "android"],
-                        "Leather": ["leather", "nappa", "vernasca", "startex"],
-                        "Sunroof": ["sunroof", "moonroof", "panoramic", "solar roof", "glass roof"],
-                        "AWD": ["awd", "4wd", "all-wheel", "four-wheel", "quattro", "xdrive", "4motion"],
-                        "Heated Seats": ["heated", "climate package"],
-                        "Autopilot": ["autopilot", "bluecruise", "super cruise", "highway driving", "hands-free", "traffic jam", "driving assistant"],
-                        "3rd Row": ["3rd row", "third row"],
-                        "Tow Package": ["tow", "towing", "trailer", "hitch"]
-                    }
-                    
-                    def car_has_all_features(row):
-                        car_dump = str(row.to_dict()).lower()
-                        
-                        for req_feature in desired_features:
-                            aliases = feature_aliases.get(req_feature, [req_feature.lower()])
-                            
-                            if req_feature == "3rd Row" and row.get('seats', 5) >= 7:
-                                continue
-                                
-                            if not any(alias.lower() in car_dump for alias in aliases):
-                                return False
-                        return True
-                        
-                    recs_df = recs_df[recs_df.apply(car_has_all_features, axis=1)]
-                
-                if recs_df.empty:
+                if results_df.empty:
                     st.warning("Matches found, but none met your strict Price, Fuel Type, Primary Use, and Must-Haves requirements. Try relaxing your filters or increasing your budget.")
                     st.session_state.search_results = None
                 else:
-                    recs_df = recs_df.head(5)
-                    
-                    tco_inputs = {
-                        'years': years_ownership, 
-                        'gas_price': gas_price, 
-                        'elec_price': elec_price,
-                        'elec_price_road': elec_price_fast,
-                        'method': global_method, 'apr': global_apr, 'term': global_term, 'down_payment': global_down,
-                        'commute_dist': commute_dist, 'days_week': days_week, 'commute_type': commute_type,
-                        'road_trip_miles': road_trip_miles, 'other_miles': other_miles,
-                        'climate': env_climate, 'terrain': env_terrain,
-                        'driver_age': driver_age_est
-                    }
-                    
-                    results = []
-                    for idx, row in recs_df.iterrows():
-                        costs = api_client.calculate_tco(row, tco_inputs)
-                        
-                        car_data = row.to_dict()
-                        if costs:
-                            car_data.update(costs)
-                            car_data['Monthly Cash Flow'] += total_subs
-                            car_data['Monthly True Cost'] += total_subs
-                        
-                        results.append(car_data)
-                    
-                    sort_cols = ["Monthly True Cost"]
-                    sort_asc = [True]
-                    
-                    if priority == "Performance (Speed)":
-                        sort_cols = ["acceleration", "Monthly True Cost"]
-                        sort_asc = [True, True] 
-                    elif priority == "Utility (Cargo)":
-                        sort_cols = ["cargo_space", "Monthly True Cost"]
-                        sort_asc = [False, True] 
-                    elif priority == "Tech & Safety":
-                        sort_cols = ["driver_assist_score", "Monthly True Cost"]
-                        sort_asc = [False, True] 
-                    
-                    results_df = pd.DataFrame(results).sort_values(by=sort_cols, ascending=sort_asc)
-                    
                     st.session_state.search_results = results_df
                     st.session_state.pitch_map = {}
                     
-                    if not results_df.empty:
-                        top_car = results_df.iloc[0]
-                        top_idx = results_df.index[0]
-                        
-                        with st.spinner(f"Auto-analyzing top match: {top_car['model']}..."):
-                            ai_instruction = f"{priority}. Please also include a response based on the 'Pros' of the vehicle from its reviews, and explicitly list out the vehicle's notable features."
-                            pitch = api_client.get_ai_pitch(top_car, ai_instruction)
-                            st.session_state.pitch_map[top_idx] = pitch
+                    top_idx = results_df.index[0]
+                    top_car = results_df.iloc[0]
+                    
+                    with st.spinner(f"Auto-analyzing top match: {top_car['model']}..."):
+                        ai_instruction = f"{priority}. Please also include a response based on the 'Pros' of the vehicle from its reviews, and explicitly list out the vehicle's notable features."
+                        pitch = api_client.get_ai_pitch(top_car, ai_instruction)
+                        st.session_state.pitch_map[top_idx] = pitch
 
     if st.session_state.search_results is not None:
         st.divider()
@@ -368,16 +282,7 @@ with tab2:
             comp_df = pd.DataFrame(rows_to_display)
             
             st.markdown("### Specifications")
-            base_cols = ['make', 'model', 'price', 'city_mpg', 'acceleration', 'seats', 'reliability_score']
-            present_base_cols = [c for c in base_cols if c in comp_df.columns]
-            final_cols = ['display_name'] + present_base_cols
-            
-            # Format price for base table
-            formatted_base_df = comp_df[final_cols].copy()
-            if 'price' in formatted_base_df.columns:
-                formatted_base_df['price'] = formatted_base_df['price'].apply(lambda x: f"${x:,.0f}" if pd.notnull(x) and isinstance(x, (int, float)) else x)
-            
-            comp_display = formatted_base_df.set_index('display_name').transpose()
+            comp_display = AppLogic.format_comparison_dataframe(comp_df)
             st.dataframe(comp_display.astype(str))
             
             st.divider()
@@ -397,49 +302,9 @@ with tab2:
                 }
                 
                 with st.spinner("Calculating multi-year costs via API..."):
-                    tco_rows = []
-                    for sel_row in rows_to_display:
-                        row_copy = sel_row.copy()
-                        deal_inputs = row_copy.get('deal_inputs', global_tco_inputs)
-                        
-                        # Fix: API Client expects a Pandas Series to cleanly perform .to_json()
-                        # Dictionaries instantly throw an exception resulting in $0 defaults!
-                        # We carefully remove 'deal_inputs' to ensure clean parsing to Series.
-                        clean_row_dict = {k: v for k, v in row_copy.items() if k not in ['deal_inputs', 'is_deal']}
-                        car_series = pd.Series(clean_row_dict)
-                        
-                        # Base calculations
-                        base_costs = api_client.calculate_tco(car_series, deal_inputs)
-                        if base_costs:
-                            row_copy['Monthly Payment'] = base_costs.get('Monthly Payment', 0)
-                            row_copy['Monthly True Cost'] = base_costs.get('Monthly True Cost', 0) + total_subs
-                            row_copy['Resale Value'] = base_costs.get('Resale Value', 0)
-                            
-                        # Calculate 1, 3, and 5 year projections
-                        for y in [1, 3, 5]:
-                            temp_inputs = deal_inputs.copy()
-                            temp_inputs['years'] = y
-                            costs = api_client.calculate_tco(car_series, temp_inputs)
-                            if costs:
-                                row_copy[f'Total Cost ({y} yr)'] = (costs.get('Monthly True Cost', 0) + total_subs) * 12 * y
-                            else:
-                                row_copy[f'Total Cost ({y} yr)'] = 0
-                                
-                        tco_rows.append(row_copy)
-                        
-                    tco_df = pd.DataFrame(tco_rows)
-                    
-                    tco_cols = ['Monthly Payment', 'Monthly True Cost', 'Resale Value', 'Total Cost (1 yr)', 'Total Cost (3 yr)', 'Total Cost (5 yr)']
-                    present_tco_cols = [c for c in tco_cols if c in tco_df.columns]
-                    final_tco_cols = ['display_name'] + present_tco_cols
-                    
-                    formatted_tco_df = tco_df[final_tco_cols].copy()
-                    for c in present_tco_cols:
-                        formatted_tco_df[c] = formatted_tco_df[c].apply(lambda x: f"${x:,.0f}" if pd.notnull(x) and isinstance(x, (int, float)) else x)
-                    
-                    tco_display = formatted_tco_df.set_index('display_name').transpose()
+                    tco_df = AppLogic.calculate_comparison_tcos(rows_to_display, global_tco_inputs, api_client, total_subs)
+                    tco_display = AppLogic.format_tco_dataframe(tco_df)
                 
-                # Render results outside of the spinner so it waits perfectly
                 st.markdown("#### TCO Results")
                 st.dataframe(tco_display.astype(str))
 
@@ -478,21 +343,17 @@ with tab4:
             if deal_method != "Lease":
                 analysis_years = st.number_input("Analysis Duration (Years)", min_value=1, max_value=15, value=5, step=1)
             
-            user_inputs = {
-                'years': analysis_years, 'annual_miles': 12000, 
-                'gas_price': gas_price, 'elec_price': elec_price, 'elec_price_road': elec_price_fast,
-                'method': deal_method, 'custom_insurance': custom_ins, 'driver_age': driver_age_est
-            }
-            
+            kwargs = {}
             if deal_method == "Finance":
-                user_inputs['apr'] = st.number_input("APR (%)", value=6.0, step=0.1)
-                user_inputs['term'] = st.number_input("Loan Term (Months)", value=60, step=12)
-                user_inputs['down_payment'] = st.number_input("Down Payment ($)", value=2000, step=500)
+                kwargs['apr'] = st.number_input("APR (%)", value=6.0, step=0.1)
+                kwargs['term'] = st.number_input("Loan Term (Months)", value=60, step=12)
+                kwargs['down_payment'] = st.number_input("Down Payment ($)", value=2000, step=500)
             elif deal_method == "Lease":
-                user_inputs['lease_monthly'] = st.number_input("Monthly Payment ($)", value=500, step=10)
-                user_inputs['lease_due'] = st.number_input("Due at Signing ($)", value=2000, step=100)
-                user_inputs['lease_term'] = st.number_input("Lease Term (Months)", value=36, step=12)
-                user_inputs['years'] = user_inputs['lease_term'] / 12
+                kwargs['lease_monthly'] = st.number_input("Monthly Payment ($)", value=500, step=10)
+                kwargs['lease_due'] = st.number_input("Due at Signing ($)", value=2000, step=100)
+                kwargs['lease_term'] = st.number_input("Lease Term (Months)", value=36, step=12)
+
+            user_inputs = AppLogic.build_deal_inputs(deal_method, analysis_years, gas_price, elec_price, elec_price_fast, custom_ins, driver_age_est, **kwargs)
 
         car_row_calc = car_row.copy()
         car_row_calc['price'] = price_input
@@ -544,20 +405,5 @@ with tab4:
                     st.session_state.comparison_list.append(snap)
                     st.success("Added!")
 
-                val_pay = costs['Monthly Payment'] * mult
-                val_fuel = costs['Monthly Fuel'] * mult
-                val_ins = costs['Monthly Ins'] * mult
-                val_maint = costs['Monthly Maint'] * mult
-                val_dep = costs['Monthly Dep'] * mult
-                val_subs = total_subs * mult
-                
-                breakdown_data = {
-                    "Cost Component": ["Vehicle Payment", "Fuel / Charging", "Insurance", "Maintenance", "Subscriptions", "Depreciation (Hidden)"],
-                    f"Cost ({view_mode})": [val_pay, val_fuel, val_ins, val_maint, val_subs, val_dep]
-                }
-                if view_mode == total_label and costs['Upfront Cost'] > 0:
-                    breakdown_data["Cost Component"].append("Upfront Due")
-                    breakdown_data[f"Cost ({view_mode})"].append(costs['Upfront Cost'])
-
-                bd_df = pd.DataFrame(breakdown_data)
+                bd_df = AppLogic.get_breakdown_data(costs, view_mode, total_label, mult, total_subs)
                 st.bar_chart(bd_df.set_index("Cost Component"))
