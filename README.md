@@ -71,7 +71,7 @@ This project was intentionally designed to demonstrate a broad spectrum of produ
 To deploy this infrastructure to your own AWS account:
 
 1. **Clone & Configure**:  
-   git clone \[https://github.com/yourusername/perfect-car-picker.git\](https://github.com/yourusername/perfect-car-picker.git)  
+   git clone \[https://github.com/jorosenberg/perfect-car-picker.git\](https://github.com/jorosenberg/perfect-car-picker.git)  
    cd perfect-car-picker/infra
 
 2. **Terraform Init**:  
