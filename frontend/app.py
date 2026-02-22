@@ -27,7 +27,6 @@ def get_cached_data():
 
 df_full = get_cached_data()
 
-# Title and Intro
 st.title("🚗 Perfect Car Picker")
 
 if len(df_full) > 10:
@@ -40,6 +39,9 @@ st.markdown("""
 **AI-Powered Vehicle Analysis & Financial Modeling**
 Answer a few questions about your lifestyle, and our AI will calculate the **True Cost of Ownership** (including depreciation, fuel, and maintenance) to find your perfect match.
 """)
+
+st.sidebar.link_button("💻 View Source Code on GitHub", "https://github.com/jorosenberg/perfect-car-picker", type="primary", use_container_width=True)
+st.sidebar.markdown("---")
 
 st.sidebar.header("🌍 Market & Finance")
 
