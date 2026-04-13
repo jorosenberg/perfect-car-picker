@@ -4,7 +4,7 @@ terraform {
     key = "terraform.tfstate"
     region = "us-east-1"
     encrypt = true
-    dynamodb_table = "perfect-car-picker-tf-locks"
+    dynamodb_table = "perfect-car-picker-tfstate"
   }
 }
 
