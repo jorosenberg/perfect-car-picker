@@ -1,10 +1,10 @@
 terraform {
   backend "s3" {
-    bucket = "perfect-car-picker-tf-state"
+    bucket = "perfect-car-picker-tfstate"
     key = "terraform.tfstate"
     region = "us-east-1"
     encrypt = true
-    dynamodb_table = "perfect-car-picker-tfstate"
+    dynamodb_table = "perfect-car-picker-tf-locks"
   }
 }
 
