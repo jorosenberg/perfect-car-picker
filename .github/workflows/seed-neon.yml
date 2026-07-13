@@ -1,0 +1,21 @@
+# Seeds the Neon Postgres `cardb` with vehicle data + review insights.
+# Replaces the retired RDS/SSH-tunnel seeding workflow. Run manually.
+# Repo secrets required: NEON_DB_HOST, NEON_DB_USER, NEON_DB_PASS
+name: Seed Neon database
+on: workflow_dispatch
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: free-hosting }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r database/requirements.txt
+      - name: Run init_db.py against Neon
+        env:
+          DB_HOST: ${{ secrets.NEON_DB_HOST }}
+          DB_USER: ${{ secrets.NEON_DB_USER }}
+          DB_PASS: ${{ secrets.NEON_DB_PASS }}
+          DB_NAME: cardb
+        run: python database/init_db.py
