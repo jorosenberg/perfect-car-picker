@@ -32,31 +32,31 @@ def load_data(api_url):
 # api
 class APIClient:
     """
-    Handles all communication with the Backend Lambda.
+    Handles all communication with the Backend.
     Removes the need for local ML libraries.
     """
     def __init__(self, api_url):
         self.api_url = api_url
 
     def refresh_database(self):
-        """Call Lambda to force a refresh of its internal database cache"""
+        """Force a refresh of the backend's internal database cache"""
         if not self.api_url: return False
         
         try:
             payload = {"action": "refresh"}
-            response = requests.post(self.api_url, json=payload, timeout=15)
+            response = requests.post(self.api_url, json=payload, timeout=90)
             return response.status_code == 200
         except Exception as e:
             print(f"API Error (Refresh): {e}")
             return False
 
     def get_all_cars(self):
-        """Call Lambda to get the full database of cars"""
+        """Get the full database of cars"""
         if not self.api_url: return pd.DataFrame()
         
         try:
             payload = {"action": "get_all_cars"}
-            response = requests.post(self.api_url, json=payload, timeout=29)
+            response = requests.post(self.api_url, json=payload, timeout=90)
             if response.status_code == 200:
                 return pd.DataFrame(response.json())
             return pd.DataFrame()
@@ -65,7 +65,7 @@ class APIClient:
             return pd.DataFrame()
 
     def get_recommendations(self, user_prefs):
-        """Call Lambda to get ML Recommendations"""
+        """Get ML Recommendations"""
         if not self.api_url: return pd.DataFrame()
         
         try:
@@ -73,7 +73,7 @@ class APIClient:
                 "action": "recommend",
                 "inputs": user_prefs
             }
-            response = requests.post(self.api_url, json=payload, timeout=29)
+            response = requests.post(self.api_url, json=payload, timeout=90)
             if response.status_code == 200:
                 return pd.DataFrame(response.json())
             return pd.DataFrame()
@@ -82,7 +82,7 @@ class APIClient:
             return pd.DataFrame()
 
     def calculate_tco(self, car_row, inputs):
-        """Call Lambda to calculate TCO and Resale Value"""
+        """Calculate TCO and Resale Value"""
         if not self.api_url: 
             print("DEBUG: calculate_tco failed - api_url is empty")
             return {}
@@ -96,11 +96,11 @@ class APIClient:
                 "inputs": inputs
             }
             
-            response = requests.post(self.api_url, json=payload, timeout=29)
+            response = requests.post(self.api_url, json=payload, timeout=90)
             
             if response.status_code == 200:
                 result = response.json()
-                result['source'] = "⚡ AWS Lambda"
+                result['source'] = "⚡ Live Backend"
                 return result
             else:
                 print(f"DEBUG (calculate_tco): API Error Response Text = {response.text}")
@@ -110,7 +110,7 @@ class APIClient:
             return {}
 
     def get_ai_pitch(self, car_row, priority):
-        """Call Lambda to get Bedrock AI Pitch"""
+        """Get the AI sales pitch (Gemini)"""
         if not self.api_url: return "API Not Configured"
         
         try:
@@ -120,12 +120,13 @@ class APIClient:
                 "car_data": car_data_clean,
                 "inputs": {"priority": priority}
             }
-            response = requests.post(self.api_url, json=payload, timeout=29)
+            response = requests.post(self.api_url, json=payload, timeout=90)
             if response.status_code == 200:
                 return response.json().get('pitch', "No pitch available.")
-            return f"Error: {response.text}"
+            return "AI analysis is temporarily unavailable."
         except Exception as e:
-            return f"Connection Error: {str(e)}"
+            print(f"API Error (Pitch): {e}")
+            return "AI analysis is temporarily unavailable."
 
 
 # buisness logic

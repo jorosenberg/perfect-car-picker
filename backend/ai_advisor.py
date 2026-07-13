@@ -2,7 +2,7 @@ import os
 import requests
 
 # Google Gemini (free tier) replaces AWS Bedrock Nova - same behavior:
-# short reasoning-capable model generates the sales pitch.
+# generates a short, persuasive sales pitch for a vehicle.
 # Set GEMINI_API_KEY in the environment (aistudio.google.com/apikey, no card needed).
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 GEMINI_URL = (
@@ -14,7 +14,7 @@ GEMINI_URL = (
 def get_car_pitch(car_row, priority):
     """
     Uses Google Gemini (free tier) to generate a sales pitch.
-    (1:1 port of the AWS Bedrock Nova version - same prompt, same fallback.)
+    (1:1 port of the AWS Bedrock Nova version - same prompt, graceful fallback.)
     """
 
     prompt = f"""
@@ -38,8 +38,6 @@ def get_car_pitch(car_row, priority):
                 "generationConfig": {
                     "maxOutputTokens": 1000,
                     "temperature": 0.7,
-                    # mirrors Nova's "low" reasoning effort
-                    "thinkingConfig": {"thinkingBudget": 128},
                 },
             },
             timeout=25,
@@ -51,7 +49,6 @@ def get_car_pitch(car_row, priority):
         for candidate in data.get("candidates", []):
             for part in candidate.get("content", {}).get("parts", []):
                 if part.get("thought"):
-                    print("Gemini is reasoning... (Logging hidden from user)")
                     continue
                 if "text" in part:
                     final_text += part["text"] + " "
@@ -59,8 +56,26 @@ def get_car_pitch(car_row, priority):
         if final_text.strip():
             return final_text.strip()
 
-        return "Pitch generated but format unrecognized."
+        return _fallback(car_row)
 
     except Exception as e:
+        # Log the real reason (bad key, quota, etc.) but never leak the prompt
+        # or the (long) priority instruction back to the UI.
         print(f"Gemini API Error: {e}")
-        return f"This {car_row.get('model')} is a fantastic choice for {priority}."
+        return _fallback(car_row)
+
+
+def _fallback(car_row):
+    # Clean, generic pitch used when the AI call is unavailable. Deliberately
+    # does NOT echo the caller's priority string, which can be a long
+    # instruction and would otherwise look like a leaked prompt in the UI.
+    year = car_row.get("year", "")
+    make = car_row.get("make", "this")
+    model = car_row.get("model", "vehicle")
+    features = car_row.get("features")
+    base = f"The {year} {make} {model} is a strong, well-rounded match for your needs."
+    if features:
+        first = str(features).split(",")[0].strip()
+        if first:
+            base += f" Notable feature: {first}."
+    return base
