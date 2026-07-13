@@ -1,7 +1,9 @@
 pandas
 numpy
 scikit-learn
-boto3
 sqlalchemy
 psycopg2-binary
 joblib
+fastapi
+uvicorn
+requests

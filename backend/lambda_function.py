@@ -2,13 +2,14 @@ import json
 import os
 import pandas as pd
 import sqlalchemy
-import boto3
 from cost_calculator import calculate_tco
 from car_recommender import train_recommender_model, get_recommendations
 from ai_advisor import get_car_pitch
 
 def get_db_host(db_name):
+    # Legacy AWS fallback - never runs when DB_HOST is set (Neon/any Postgres).
     try:
+        import boto3
         print(f"DB_HOST missing from Env Vars. Attempting to find RDS endpoint for DBName '{db_name}' via boto3...")
         rds_client = boto3.client('rds', region_name='us-east-1')
         response = rds_client.describe_db_instances()
@@ -24,8 +25,10 @@ def get_db_host(db_name):
         print(f"Failed to fetch RDS endpoint via boto3: {e}")
 
 def get_db_pass(aws_region='us-east-1'):
+    # Legacy AWS fallback - never runs when DB_PASS is set (Neon/any Postgres).
     print("Retrieving database password from AWS Secrets Manager...")
     try:
+        import boto3
         secrets_client = boto3.client('secretsmanager', region_name=aws_region)
 
         response = secrets_client.list_secrets()
@@ -42,7 +45,7 @@ def get_db_pass(aws_region='us-east-1'):
         print(f"Failed to fetch secret: {e}")
 
 def load_data():
-    print("--- 🔍 DB LOAD INITIATED ---")
+    print("--- DB LOAD INITIATED ---")
     db_user = os.environ.get('DB_USER', '')
     db_pass = os.environ.get('DB_PASS')
     db_name = os.environ.get('DB_NAME', 'cardb')
@@ -61,9 +64,14 @@ def load_data():
     if db_host and db_pass:
         try:
             print(f"Attempting connection to PostgreSQL at {db_host}...")
-            db_url = f"postgresql+psycopg2://{db_user}:{db_pass}@{db_host}:5432/{db_name}"
-            # Short timeout so Lambda doesn't hang forever if networking fails
-            engine = sqlalchemy.create_engine(db_url, connect_args={'connect_timeout': 5})
+            db_port = os.environ.get('DB_PORT', '5432')
+            db_url = f"postgresql+psycopg2://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
+            # Short timeout so the server doesn't hang forever if networking fails.
+            # DB_SSLMODE=require for Neon (TLS enforced); unset for local dev.
+            connect_args = {'connect_timeout': 5}
+            if os.environ.get('DB_SSLMODE'):
+                connect_args['sslmode'] = os.environ['DB_SSLMODE']
+            engine = sqlalchemy.create_engine(db_url, connect_args=connect_args)
             df = pd.read_sql("SELECT * FROM cars", engine)
             print(f"SUCCESS: Loaded {len(df)} vehicles from RDS.")
             return df

@@ -1,0 +1,15 @@
+# Render Blueprint - Streamlit frontend (free plan)
+# Replaces: EC2 t3.micro + nginx + Let's Encrypt (Render terminates TLS
+# and serves the custom domain perfectcarpicker.jonahrosenberg.work).
+services:
+  - type: web
+    name: perfectcarpicker
+    runtime: docker
+    plan: free
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: APP_PORT          # frontend/Dockerfile starts streamlit on $APP_PORT
+        value: "10000"         # Render's default expected port
+      - key: API_URL           # HF Space backend URL + route (set real value in dashboard)
+        sync: false
