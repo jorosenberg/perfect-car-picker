@@ -45,7 +45,10 @@ def get_car_pitch(car_row, priority):
             },
             timeout=25,
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            # Surface the real reason (bad key, unknown model, quota, etc.).
+            print(f"Gemini API Error {response.status_code}: {response.text[:600]}")
+            return _fallback(car_row)
         data = response.json()
 
         final_text = ""
@@ -59,6 +62,12 @@ def get_car_pitch(car_row, priority):
         if final_text.strip():
             return final_text.strip()
 
+        # No visible text (e.g. all budget spent thinking) - log finishReason.
+        try:
+            fr = data.get("candidates", [{}])[0].get("finishReason")
+            print(f"Gemini returned no text (finishReason={fr})")
+        except Exception:
+            pass
         return _fallback(car_row)
 
     except Exception as e:
