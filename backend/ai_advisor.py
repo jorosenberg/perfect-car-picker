@@ -36,7 +36,10 @@ def get_car_pitch(car_row, priority):
             json={
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "maxOutputTokens": 1000,
+                    # Generous headroom: thinking-capable flash models can spend
+                    # a chunk of the budget "thinking", so leave ample room for
+                    # the visible pitch text (a small budget returns empty text).
+                    "maxOutputTokens": 4096,
                     "temperature": 0.7,
                 },
             },
